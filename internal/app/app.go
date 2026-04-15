@@ -39,7 +39,7 @@ func New() (*App, error) {
 	}
 
 	sessionSvc := session.NewService(logger, cfg, backend)
-	introspectionSvc := introspect.NewService(logger, cfg)
+	introspectionSvc := introspect.NewService(logger, cfg, backend)
 	extractSvc := extract.NewService(logger, cfg)
 	policySvc := policy.NewService(logger, cfg, backend)
 	daemonRunner := daemon.NewRunner(logger, cfg)
