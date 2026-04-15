@@ -22,6 +22,8 @@ Do these in order, every session:
 
 Do not start planning or coding before doing all three.
 
+Resolve `HIZAL_PROJECT_ID` to `d5bca61a-3f27-4256-bb6b-14654b0fcd3f` and `FORGE_PROJECT_ID` to `cmnz3po9s000hjx01phjymcpv`. Use literal resolved values in tool calls. Never pass `HIZAL_PROJECT_ID` or `FORGE_PROJECT_ID` verbatim.
+
 ---
 
 ## 1. Start a Hizal session
@@ -33,7 +35,7 @@ Default for this repo:
 ```txt
 start_session(
   lifecycle_slug="dev_coding",
-  project_id="$HIZAL_PROJECT_ID"
+  project_id="HIZAL_PROJECT_ID"
 )
 ```
 
@@ -72,7 +74,7 @@ Specs come from Forge MCP.
 forge_get_task(taskId="<ticket-id>")
 ```
 
-System-1 Forge tickets live in project `$FORGE_PROJECT_ID` and use the `SYS1-###` prefix.
+System-1 Forge tickets live in project `FORGE_PROJECT_ID` and use the `SYS1-###` prefix.
 
 If direct lookup by ticket id fails, search within that project by number or title, or list project tasks and locate it there.
 
@@ -96,7 +98,7 @@ If you know the exact chunk you want, use `read_context`.
 
 ```txt
 read_context(
-  project_id="$HIZAL_PROJECT_ID",
+  project_id="HIZAL_PROJECT_ID",
   query_key="<exact-query-key>"
 )
 ```
@@ -118,7 +120,7 @@ Then narrow by scope when needed:
 ```txt
 search_context(
   query="<key concept from the spec>",
-  project_id="$HIZAL_PROJECT_ID",
+  project_id="HIZAL_PROJECT_ID",
   scope="PROJECT"
 )
 
@@ -233,7 +235,7 @@ Done means:
 gh pr create \
   --repo XferOps/system1 \
   --title "feat/fix(SYS1-XX): <description>" \
-  --body "## Summary\n\n<what you built>\n\n## Testing\n\n<what you ran>\n\n---\n**Forge ticket:** [SYS1-XX](https://forge.xferops.dev/projects/$FORGE_PROJECT_ID) - <ticket title>"
+  --body "## Summary\n\n<what you built>\n\n## Testing\n\n<what you ran>\n\n---\n**Forge ticket:** [SYS1-XX](https://forge.xferops.dev/projects/FORGE_PROJECT_ID) - <ticket title>"
 ```
 
 ---
