@@ -4,18 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/config"
+	"github.com/google/uuid"
 )
 
-var (
-	ErrNoEnabledTypes      = fmt.Errorf("no enabled types configured")
-	ErrInvalidArtifactType = fmt.Errorf("invalid artifact type for this runtime")
-	ErrNoProvenance      = fmt.Errorf("candidate requires provenance and evidence")
-)
+var ErrNoEnabledTypes = fmt.Errorf("no enabled types configured")
 
 const (
 	ConfidenceLow    = "low"
@@ -157,7 +155,15 @@ func (s *Service) detectType(ctx context.Context, content string) string {
 
 	bestType := ""
 	bestScore := 0
-	for t, score := range typeFlags {
+
+	typeNames := make([]string, 0, len(typeFlags))
+	for name := range typeFlags {
+		typeNames = append(typeNames, name)
+	}
+	sort.Strings(typeNames)
+
+	for _, t := range typeNames {
+		score := typeFlags[t]
 		if score > bestScore {
 			bestScore = score
 			bestType = t
@@ -271,5 +277,5 @@ func (s *Service) extractEvidence(span artifacts.EventSpan) []string {
 }
 
 func generateCandidateID() string {
-	return fmt.Sprintf("cand_%d", time.Now().UnixNano())
+	return uuid.New().String()
 }
