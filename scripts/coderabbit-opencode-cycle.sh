@@ -297,7 +297,7 @@ graphql_sources = []
 for thread in thread_nodes:
     thread_id = thread.get("id", "")
     for comment in ((thread.get("comments") or {}).get("nodes") or []):
-        user = ((comment.get("user") or {}).get("login") or "")
+        user = ((comment.get("author") or {}).get("login") or "")
         body = comment.get("body") or ""
         cid = comment.get("id") or ""
         if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
