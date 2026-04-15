@@ -37,34 +37,43 @@ Use --verbose for detailed output at each step.`,
 	cmd.Flags().BoolP("verbose", "v", false, "verbose output")
 	cmd.Flags().BoolP("clean", "c", false, "clean demo state before running")
 	cmd.Flags().String("fixtures-dir", "", "path to demo fixtures (default: testdata)")
+	cmd.Flags().String("state-dir", "", "path to persistent demo state (default: .demo)")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		clean, _ := cmd.Flags().GetBool("clean")
 		fixturesDir, _ := cmd.Flags().GetString("fixtures-dir")
+		stateDir, _ := cmd.Flags().GetString("state-dir")
 
 		if fixturesDir == "" {
 			fixturesDir = "testdata"
 		}
+		if stateDir == "" {
+			stateDir = ".demo"
+		}
 
-		return runDemo(ctx, fixturesDir, verbose, clean)
+		return runDemo(ctx, fixturesDir, stateDir, verbose, clean)
 	}
 
 	return cmd
 }
 
-func runDemo(ctx context.Context, fixturesDir string, verbose, clean bool) error {
+func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean bool) error {
 	logger := slog.Default()
+
+	if clean {
+		if err := os.RemoveAll(stateDir); err != nil {
+			logger.Warn("failed to clean demo state", "path", stateDir, "error", err)
+		} else {
+			logger.Info("cleaned demo state", "path", stateDir)
+		}
+	}
 
 	workDir, err := os.MkdirTemp("", "system1-demo-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(workDir)
-
-	if clean {
-		logger.Info("Cleaning demo state")
-	}
 
 	fixtureLog := filepath.Join(fixturesDir, "session.jsonl")
 	if _, err := os.Stat(fixtureLog); os.IsNotExist(err) {
