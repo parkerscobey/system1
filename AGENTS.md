@@ -1,211 +1,256 @@
-# AGENTS.md - System1: the agent subconsious multiplexer daemon
-You are a coding agent working on the System1 codebase (Go, Cobra, SQLite).
-This file tells you how to work here. Read it fully before doing anything else.
+# AGENTS.md - System-1: the agent subconscious multiplexer daemon
 
-### Hizal MCP
+You are a coding agent working on the System-1 codebase.
 
-You have an external context system: Hizal MCP. It is your source of truth for your agent identity, memory, and persisted project/org knowledge. Full usage guide is found [here](./agent-hizal-usage.md)
+Primary stack here:
+- Go
+- Cobra
+- SQLite
+- MCP-first interfaces
 
-## Your First Three Steps (always, no exceptions)
+Read this file before doing anything else.
 
-1. **Start a Hizal session**
-2. **Read the task spec from Forge MCP (System1 project_id: `$FORGE_PROJECT_ID`)**
-3. **Query Hizal for existing context on the task -- use `read_context` and `search_context` tools**
+For deeper Hizal reference, see [./agent-hizal-usage.md](./agent-hizal-usage.md).
 
-After completing these three steps, you can start planning or writing code.
+## Your first three steps
+
+Do these in order, every session:
+
+1. Start a Hizal session
+2. Read the Forge task spec
+3. Retrieve relevant Hizal context
+
+Do not start planning or coding before doing all three.
 
 ---
 
-## 1. Start a Hizal Session
+## 1. Start a Hizal session
 
-Every coding session starts and ends with Hizal.
+Every coding session starts with Hizal.
 
-```
-start_session(lifecycle_slug="dev_coding")
-```
+Default for this repo:
 
-This returns a `session_id`. Keep it visible — you'll need it for `register_focus` and `end_session`.
-
-Then register what you're working on:
-
-```
-register_focus(
-  session_id="<session-id>",
-  task="SYS1-XX: <ticket title>",
-  project_id="$FORGE_PROJECT_ID"
+```txt
+start_session(
+  lifecycle_slug="dev_coding",
+  project_id="$HIZAL_PROJECT_ID"
 )
 ```
 
-### Session Recovery
+This returns a `session_id` and injected chunks. Inspect injected chunks first. Do not immediately re-search IDENTITY, PRINCIPLE, or other already-injected context unless you need more detail.
 
-If you lose your `session_id` (context reset, compaction):
+Then register focus:
 
+```txt
+register_focus(
+  session_id="<session-id>",
+  task="SYS1-XX: <ticket title>",
+  tags=["system1", "ticket:SYS1-XX", "area:<subsystem>"]
+)
 ```
+
+Use `dev_coding` as the normal lifecycle for repo work. If this project later uses ADH or another lifecycle, keep the same retrieval contract and only change the lifecycle slug or focus tags as needed.
+
+### Session recovery
+
+If you lose your `session_id`:
+
+```txt
 get_active_session()
 ```
 
-- `status="active"` → use the returned `session_id`, call `resume_session` to extend TTL
-- `status="none"` → call `start_session` to begin fresh
+- `status="active"` → use returned `session_id`, then call `resume_session`
+- `status="none"` → call `start_session` again
 
 ---
 
-## 2. Read the Task Spec
+## 2. Read the task spec
 
-Specs come from Forge via the Forge MCP:
+Specs come from Forge MCP.
 
-```
+```txt
 forge_get_task(taskId="<ticket-id>")
 ```
 
-System1 Forge tickets live in project `$FORGE_PROJECT_ID` and use the `SYS1-###` prefix.
-If direct search by full ticket id fails, search within that project by number or title, or list tasks
-for that project and locate the ticket there.
+System-1 Forge tickets live in project `$FORGE_PROJECT_ID` and use the `SYS1-###` prefix.
 
-The ticket description is the spec. Read it fully before moving to step 3.
+If direct lookup by ticket id fails, search within that project by number or title, or list project tasks and locate it there.
+
+The ticket description is the working spec. Read it fully before retrieving Hizal context.
 
 ---
 
-## 3. Search Hizal for Existing Context
+## 3. Retrieve Hizal context
 
-Now that you know what you're building, search Hizal broadly first, then narrow if needed. The Forge ticket may provide exact chunk query keys. If it does, use `read_context` before trying `search_context`
+Use Hizal as the continuity layer for this repo.
 
-`search_context` can search across all accessible scopes by default:
+### Retrieval order
 
-- `AGENT` — your personal memory and prior investigations
-- `PROJECT` — Back Office knowledge and conventions
-- `ORG` — org-wide standards and principles
+1. If the Forge ticket includes exact Hizal query keys, use `read_context` first
+2. Then do broad discovery with `search_context`
+3. Then rerun narrower searches or read exact chunks before coding from a result
+
+### Exact retrieval
+
+If you know the exact chunk you want, use `read_context`.
+
+```txt
+read_context(
+  project_id="$HIZAL_PROJECT_ID",
+  query_key="<exact-query-key>"
+)
+```
+
+Use `read_context` when the ticket already tells you the exact spec chunk, design chunk, or convention chunk to load.
+
+### Discovery search
 
 Start with 2-3 broad searches using different phrasings:
 
-```
-search_context(query="<key concept from the spec>")
+```txt
 search_context(query="<ticket id or feature name>")
+search_context(query="<key concept from the spec>")
 search_context(query="<related subsystem or endpoint>")
 ```
 
-Then narrow when you need a specific layer of context:
+Then narrow by scope when needed:
 
-```
-# Project-specific knowledge and conventions
+```txt
 search_context(
   query="<key concept from the spec>",
   project_id="$HIZAL_PROJECT_ID",
   scope="PROJECT"
 )
 
-# Prior agent memory / investigation notes
 search_context(
   query="<key concept from the spec>",
   scope="AGENT",
   chunk_type="MEMORY"
 )
 
-# Org-wide principles and standards
 search_context(
   query="<key concept from the spec>",
   scope="ORG"
 )
 ```
 
-If you know the exact saved item you're looking for, search by `query_key`.
+### Important search rule
 
-Examples:
+Broad search hits are leads, not authority.
 
-```
-search_context(query="<key concept from the spec>", project_id="$HIZAL_PROJECT_ID")
-read_context(query_key="<exact-query-key>", project_id="$HIZAL_PROJECT_ID")
-```
+`search_context` results do not include `scope` or `chunk_type`, so do not blindly trust a broad hit as the final answer. If a hit matters:
 
-Run 2-3 searches with different phrasings. Read the returned chunks — they contain
-architecture decisions, conventions, and prior work that must inform your implementation.
+- rerun the search with narrower filters
+- or load the exact chunk with `read_context`
+- then code from the verified result
 
-If an `AGENT` memory chunk turns out to be broadly useful for the team, promote it later by
-writing it back as `write_knowledge` or `write_convention`.
+### Authority order
 
-Don't rediscover what the team already decided.
+When sources disagree, trust them in this order:
+
+1. Forge ticket spec and referenced spec chunks
+2. PROJECT knowledge and conventions
+3. ORG principles
+4. AGENT memory
+
+Treat AGENT memory as prior investigation and useful leads, not final project truth.
+
+If an AGENT memory chunk is broadly useful, promote it later with `write_knowledge` or `write_convention`.
+
+Do not rediscover decisions the team already made.
 
 ---
 
-## Writing Code
+## Writing code
 
 ### Branch first, always
 
-Before writing a single line of code:
+Before writing code:
 
 ```bash
 git fetch origin main
 git checkout -b feat/<ticket-id-lowercase>-<short-description> main
-# e.g. feat/hizal-146-password-strength-validation
 ```
 
-This repo commonly uses **git worktrees**. `main` may already be checked out in another worktree,
-so do not assume `git checkout main` will succeed. If your current worktree already points at the
-same commit as `main`, branch from the current `HEAD`. Otherwise branch from fetched `main`
-without trying to switch the other worktree.
+Example:
 
-**Never commit directly to main.** If you realize you've committed to main, stop —
-create a branch from your current HEAD and reset main before pushing.
+```bash
+git checkout -b feat/sys1-8-introspection-api main
+```
 
-### Stack
+This repo commonly uses git worktrees. `main` may already be checked out elsewhere, so do not assume `git checkout main` will succeed. If your current worktree already points at the same commit as `main`, branch from current `HEAD`. Otherwise branch from fetched `main` without trying to switch another worktree.
 
-<!-- TODO: fill in -->
+Never commit directly to `main`.
 
-### Conventions
+### Local conventions
 
-<!-- TODO: fill in -->
+- Keep the MVP thin
+- Preserve the generic artifact model even when MVP enables only a narrow subset
+- Prefer explicit config over framework magic
+- Introspection is MCP-first. CLI mirrors exist for dev and debug, not as the primary interface
+- Match existing repo structure and naming unless the ticket explicitly changes it
 
 ### Build check
 
-<!-- TODO: fill in -->
+Before opening a PR, run:
 
-### Running tests/linting
-
-<!-- TODO: fill in -->
+```bash
+go fmt ./...
+go test ./...
+go build ./cmd/system1
+```
 
 ---
 
-## Write to Hizal As You Build
+## Write to Hizal as you build
 
-This is not optional. Write chunks as you make decisions — not just at the end.
+This is required.
+
+Write durable context when you make a meaningful decision, learn a reusable convention, or uncover something worth preserving.
 
 | What you're writing | Tool | Scope |
 |---------------------|------|-------|
 | Architecture or design decision | `write_knowledge` | PROJECT |
-| Convention this codebase follows | `write_convention` | PROJECT (always_inject) |
-| Something personal you learned | `write_memory` | AGENT |
+| Convention this codebase follows | `write_convention` | PROJECT |
+| Something personal to your investigation or workflow | `write_memory` | AGENT |
 
-**Do not use `write_context`** — it's deprecated. Use the purpose-built tools above.
+Do not use `write_context`. It is deprecated.
 
-Write one chunk per meaningful decision. Don't batch everything into one chunk at the end.
+Do not wait until the end of the task to write everything.
 
 ---
 
 ## Open the PR
 
-**Your session is not complete until a PR exists.** Tests passing and code written is not done.
-Done means: branch pushed, PR open, reviewers requested.
+The task is not complete until a PR exists.
+
+Done means:
+- branch pushed
+- PR open
+- reviewers requested
 
 ```bash
 gh pr create \
   --repo XferOps/system1 \
   --title "feat/fix(SYS1-XX): <description>" \
-  --body "## Summary\n\n<what you built>\n\n## Testing\n\n<what you ran>\n\n---\n**Forge ticket:** [SYS1-XX](https://forge.xferops.dev/projects/$FORGE_PROJECT_ID) — <ticket title>"
+  --body "## Summary\n\n<what you built>\n\n## Testing\n\n<what you ran>\n\n---\n**Forge ticket:** [SYS1-XX](https://forge.xferops.dev/projects/$FORGE_PROJECT_ID) - <ticket title>"
 ```
 
 ---
 
-## End Your Session
+## End your session
 
-After the PR is open and the Forge spec is updated:
+After the PR is open and the Forge task is updated:
 
-```
+```txt
 end_session(session_id="<session-id>")
 ```
 
-Review the returned MEMORY chunks. For each one, decide:
-- **Keep** — useful personal observation, leave as AGENT memory
-- **Promote** — valuable for the team, call `write_knowledge` with the content
-- **Discard** — noise, ignore it
+Review the returned surfaced chunks.
 
-This is how knowledge compounds across agents and sessions.
+For each one:
+- **Keep** → useful as-is
+- **Promote** → rewrite as `write_knowledge` or `write_convention` if it should become shared project context
+- **Discard** → ignore noise
 
+This is how knowledge compounds across sessions and agents.
