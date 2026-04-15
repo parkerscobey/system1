@@ -24,6 +24,8 @@ Do not start planning or coding before doing all three.
 
 Resolve `HIZAL_PROJECT_ID` to `d5bca61a-3f27-4256-bb6b-14654b0fcd3f` and `FORGE_PROJECT_ID` to `cmnz3po9s000hjx01phjymcpv`. Use literal resolved values in tool calls. Never pass `HIZAL_PROJECT_ID` or `FORGE_PROJECT_ID` verbatim.
 
+If Hizal fails at any point, report it to the user immediately. Do not let Hizal session failures, read/search failures, write failures, or suspicious missing context pass silently. Say what failed, where it failed, and whether work is blocked or can continue safely with reduced continuity.
+
 ---
 
 ## 1. Start a Hizal session
@@ -220,6 +222,8 @@ Do not use `write_context`. It is deprecated.
 
 Do not wait until the end of the task to write everything.
 
+Every session must produce at least one durable AGENT memory. Before ending the session, write at least one `write_memory` chunk that captures what you did, what changed, what you learned, or what should carry forward into the next run.
+
 ---
 
 ## Open the PR
@@ -247,6 +251,8 @@ After the PR is open and the Forge task is updated:
 ```txt
 end_session(session_id="<session-id>")
 ```
+
+Before ending the session, make sure you have written at least one `write_memory` chunk for that session.
 
 Review the returned surfaced chunks.
 
