@@ -114,7 +114,6 @@ fi
 
 require_bin gh
 require_bin python3
-require_bin opencode
 require_bin git
 
 if [[ -z "$REPO" ]]; then
@@ -240,6 +239,8 @@ for prompt_file in "${PROMPT_FILES[@]}"; do
     echo "---"
     continue
   fi
+
+  require_bin opencode
 
   PROMPT_CONTENT=$(cat "$prompt_file")
   FULL_PROMPT="$PROMPT_CONTENT
