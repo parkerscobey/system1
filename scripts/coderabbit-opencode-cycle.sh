@@ -56,11 +56,21 @@ DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
-      REPO=${2:-}
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "Error: --repo requires a non-empty argument that does not start with '-'" >&2
+        usage
+        exit 1
+      fi
+      REPO=$2
       shift 2
       ;;
     --branch)
-      BRANCH=${2:-}
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "Error: --branch requires a non-empty argument that does not start with '-'" >&2
+        usage
+        exit 1
+      fi
+      BRANCH=$2
       shift 2
       ;;
     --include-aggregate)
