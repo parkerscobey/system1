@@ -70,6 +70,7 @@ func NewService(logger *slog.Logger, cfg config.Config) *Service {
 
 func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	stats := &IngestStats{}
+	s.lastSpans = nil
 
 	logPath := s.cfg.SessionLogPath
 	if _, err := os.Stat(logPath); errors.Is(err, os.ErrNotExist) {
