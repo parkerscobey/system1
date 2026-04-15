@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -24,6 +27,8 @@ type Service struct {
 	backend *file.Store
 }
 
+const ambientSnapshotFilename = ".ambient_context.json"
+
 func NewService(logger *slog.Logger, cfg config.Config, backend *file.Store) *Service {
 	return &Service{logger: logger, cfg: cfg, backend: backend}
 }
@@ -43,6 +48,10 @@ func (s *Service) Start(ctx context.Context) (StartResult, error) {
 	}
 
 	wakingMind := s.generateWakingMind(ambientArtifacts)
+	if err := persistAmbientSnapshot(s.cfg.StateDir, ambientArtifacts); err != nil {
+		s.logger.ErrorContext(ctx, "failed to persist ambient snapshot", "error", err)
+		return StartResult{}, err
+	}
 
 	s.logger.InfoContext(ctx, "session started",
 		slog.Int("ambient_artifacts", len(ambientArtifacts)),
@@ -121,4 +130,39 @@ func (s *Service) generateWakingMind(artifacts []artifacts.PersistedArtifact) st
 	sb.WriteString("\n--- END ---\n")
 
 	return sb.String()
+}
+
+// LoadAmbientSnapshot returns the last persisted preloaded ambient context set.
+func LoadAmbientSnapshot(stateDir string) ([]artifacts.PersistedArtifact, error) {
+	data, err := os.ReadFile(filepath.Join(stateDir, ambientSnapshotFilename))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var ambient []artifacts.PersistedArtifact
+	if err := json.Unmarshal(data, &ambient); err != nil {
+		return nil, err
+	}
+
+	return ambient, nil
+}
+
+func persistAmbientSnapshot(stateDir string, ambient []artifacts.PersistedArtifact) error {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(ambient, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal ambient snapshot: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(stateDir, ambientSnapshotFilename), data, 0o644); err != nil {
+		return fmt.Errorf("write ambient snapshot: %w", err)
+	}
+
+	return nil
 }

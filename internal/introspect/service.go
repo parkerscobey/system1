@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
 	artifactslib "github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/backend/file"
 	"github.com/XferOps/system1/internal/config"
+	"github.com/XferOps/system1/internal/session"
 )
 
 type Result struct {
@@ -91,32 +93,25 @@ func isCalibrationQuery(query string) bool {
 }
 
 func (s *Service) queryAmbientContext(ctx context.Context, query string) ([]artifactslib.PersistedArtifact, error) {
-	var allArtifacts []artifactslib.PersistedArtifact
-
-	for _, artifactType := range s.cfg.EnabledTypes {
-		artifactsByType, err := s.backend.FindByType(ctx, artifactType)
-		if err != nil {
-			s.logger.WarnContext(ctx, "failed to fetch artifacts by type",
-				slog.String("type", artifactType), "error", err)
-			continue
-		}
-		allArtifacts = append(allArtifacts, artifactsByType...)
+	allArtifacts, err := session.LoadAmbientSnapshot(s.cfg.StateDir)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(allArtifacts) == 0 {
 		return nil, nil
 	}
 
-	queryLower := strings.ToLower(query)
+	queryTerms := normalizedTerms(query)
 	var relevant []artifactslib.PersistedArtifact
 
 	for _, a := range allArtifacts {
-		titleLower := strings.ToLower(a.Title)
-		bodyLower := strings.ToLower(a.Body)
-		if strings.Contains(titleLower, queryLower) || strings.Contains(bodyLower, queryLower) {
+		if matchesArtifact(queryTerms, a) {
 			relevant = append(relevant, a)
 		}
 	}
+
+	sortArtifactsByRecency(relevant)
 
 	const maxAmbient = 10
 	if len(relevant) > maxAmbient {
@@ -170,19 +165,15 @@ func (s *Service) synthesizeResponse(query string, artifacts []artifactslib.Pers
 		answer += "\n(Retrieved from storage)"
 	}
 
-	refs := make([]string, len(uniqueArtifacts))
-	ev := make([]string, 0)
-	for i, a := range uniqueArtifacts {
-		refs[i] = a.PersistedID
-		ev = append(ev, a.Provenance.EvidenceSnippets...)
+	result := Result{
+		Answer:        strings.TrimSpace(answer),
+		DebugIncluded: debug,
+	}
+	if debug {
+		result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
 	}
 
-	return Result{
-		Answer:        strings.TrimSpace(answer),
-		ArtifactRefs:  refs,
-		Evidence:      ev,
-		DebugIncluded: debug,
-	}, nil
+	return result, nil
 }
 
 func (s *Service) synthesizeCalibrationResponse(query string, artifacts []artifactslib.PersistedArtifact, debug bool) (Result, error) {
@@ -217,16 +208,15 @@ func (s *Service) synthesizeCalibrationResponse(query string, artifacts []artifa
 
 	answer := sb.String()
 
-	refs := make([]string, len(uniqueArtifacts))
-	for i, a := range uniqueArtifacts {
-		refs[i] = a.PersistedID
+	result := Result{
+		Answer:        strings.TrimSpace(answer),
+		DebugIncluded: debug,
+	}
+	if debug {
+		result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
 	}
 
-	return Result{
-		Answer:        strings.TrimSpace(answer),
-		ArtifactRefs:  refs,
-		DebugIncluded: debug,
-	}, nil
+	return result, nil
 }
 
 func deduplicateArtifacts(artifacts []artifactslib.PersistedArtifact) []artifactslib.PersistedArtifact {
@@ -242,6 +232,9 @@ func deduplicateArtifacts(artifacts []artifactslib.PersistedArtifact) []artifact
 }
 
 func getRecentArtifacts(artifacts []artifactslib.PersistedArtifact, max int) []artifactslib.PersistedArtifact {
+	artifacts = append([]artifactslib.PersistedArtifact(nil), artifacts...)
+	sortArtifactsByRecency(artifacts)
+
 	if len(artifacts) <= max {
 		return artifacts
 	}
@@ -261,28 +254,106 @@ func hasRecentArtifacts(artifacts []artifactslib.PersistedArtifact, within time.
 func extractTopics(artifacts []artifactslib.PersistedArtifact) []string {
 	topicSet := make(map[string]bool)
 	for _, a := range artifacts {
-		title := strings.ToLower(a.Title)
-		words := strings.Fields(title)
+		words := strings.Fields(a.Title)
 		for _, word := range words {
-			if len(word) > 3 {
+			word = normalizeTopicTerm(word)
+			if shouldIncludeTopic(word, 4) {
 				topicSet[word] = true
 			}
 		}
-		body := strings.ToLower(a.Body)
-		words = strings.Fields(body)
+		words = strings.Fields(a.Body)
 		for _, word := range words {
-			if len(word) > 4 {
+			word = normalizeTopicTerm(word)
+			if shouldIncludeTopic(word, 5) {
 				topicSet[word] = true
 			}
 		}
 	}
 
-	var topics []string
+	keys := make([]string, 0, len(topicSet))
 	for topic := range topicSet {
-		topics = append(topics, topic)
-		if len(topics) >= 5 {
-			break
+		keys = append(keys, topic)
+	}
+	sort.Strings(keys)
+	if len(keys) > 5 {
+		keys = keys[:5]
+	}
+
+	return keys
+}
+
+func sortArtifactsByRecency(artifacts []artifactslib.PersistedArtifact) {
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		return artifacts[i].WrittenAt.After(artifacts[j].WrittenAt)
+	})
+}
+
+func normalizedTerms(text string) []string {
+	words := strings.Fields(text)
+	terms := make([]string, 0, len(words))
+	for _, word := range words {
+		term := normalizeTopicTerm(word)
+		if term != "" {
+			terms = append(terms, term)
 		}
 	}
-	return topics
+	return terms
+}
+
+func matchesArtifact(queryTerms []string, artifact artifactslib.PersistedArtifact) bool {
+	if len(queryTerms) == 0 {
+		return false
+	}
+
+	artifactTerms := make(map[string]bool)
+	for _, word := range normalizedTerms(artifact.Title + " " + artifact.Body) {
+		artifactTerms[word] = true
+	}
+
+	for _, term := range queryTerms {
+		if artifactTerms[term] {
+			return true
+		}
+	}
+
+	return false
+}
+
+func collectDebugEvidence(artifacts []artifactslib.PersistedArtifact) ([]string, []string) {
+	refs := make([]string, len(artifacts))
+	evidence := make([]string, 0)
+	for i, a := range artifacts {
+		refs[i] = a.PersistedID
+		evidence = append(evidence, a.Provenance.EvidenceSnippets...)
+	}
+	return refs, evidence
+}
+
+func normalizeTopicTerm(word string) string {
+	return strings.Trim(strings.ToLower(word), ".,!?:;()[]{}\"'`")
+}
+
+func shouldIncludeTopic(word string, minLength int) bool {
+	if len(word) < minLength {
+		return false
+	}
+	return !topicStopwords[word]
+}
+
+var topicStopwords = map[string]bool{
+	"about": true,
+	"after": true,
+	"also":  true,
+	"and":   true,
+	"from":  true,
+	"have":  true,
+	"just":  true,
+	"that":  true,
+	"them":  true,
+	"they":  true,
+	"this":  true,
+	"what":  true,
+	"when":  true,
+	"with":  true,
+	"your":  true,
 }
