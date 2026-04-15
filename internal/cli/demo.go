@@ -101,9 +101,13 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	logger.Info("  config", "work_dir", workDir, "log_path", fixtureLog)
 
 	ingestSvc := ingest.NewService(logger, cfg)
-	ingestStats, err := ingestSvc.Ingest(ctx)
+	ingestStats := &ingest.IngestStats{}
+	stats, err := ingestSvc.Ingest(ctx)
 	if err != nil && err != ingest.ErrEmptyLog {
 		return fmt.Errorf("ingest: %w", err)
+	}
+	if stats != nil {
+		ingestStats = stats
 	}
 
 	if verbose {

@@ -55,9 +55,13 @@ func TestDemoAcceptancePath(t *testing.T) {
 	}
 
 	ingestSvc := ingest.NewService(logger, cfg)
-	ingestStats, err := ingestSvc.Ingest(ctx)
+	ingestStats := &ingest.IngestStats{}
+	stats, err := ingestSvc.Ingest(ctx)
 	if err != nil && err != ingest.ErrEmptyLog {
 		t.Fatalf("ingest: %v", err)
+	}
+	if stats != nil {
+		ingestStats = stats
 	}
 
 	if ingestStats.EventsProcessed != 4 {
