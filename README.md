@@ -64,6 +64,24 @@ make build
 make test
 ```
 
+## Review automation
+
+For PRs with CodeRabbit feedback, this repo includes a helper script that:
+
+- fetches CodeRabbit "Prompt for AI Agents" blocks from a PR
+- runs one non-interactive `opencode run` per prompt
+- appends a commit instruction to each run
+- pushes the branch once at the end
+
+Example:
+
+```bash
+./scripts/coderabbit-opencode-cycle.sh 13 --repo XferOps/system1 --dry-run
+./scripts/coderabbit-opencode-cycle.sh 13 --repo XferOps/system1
+```
+
+By default, the script skips the aggregate "Prompt for all review comments..." block to avoid duplicating the individual prompt runs.
+
 ## MVP principles
 
 - core generic, defaults narrow
