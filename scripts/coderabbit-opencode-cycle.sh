@@ -166,11 +166,76 @@ REPO_NAME=${REPO#*/}
 gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > "$ISSUE_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate > "$REVIEW_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate > "$INLINE_JSON"
-gh api graphql \
-  -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved comments(first:100) { nodes { id } } } } } } }' \
-  -f owner="$OWNER" \
-  -f repo="$REPO_NAME" \
-  -F number="$PR_NUMBER" > "$THREADS_JSON"
+THREADS_NODES="[]"
+THREADS_CURSOR="null"
+HAS_MORE_THREADS=true
+
+fetch_all_thread_comments() {
+  local thread_id="$1"
+  local comment_ids="[]"
+  local cursor="null"
+  
+  while true; do
+    local query="query(\$threadId:ID!, \$cursor:String) { node(id:\$threadId) { ... on ReviewThread { comments(first:100, after:\$cursor) { pageInfo { hasNextPage endCursor } nodes { id } } } } }"
+    
+    local response
+    response=$(gh api graphql -f query="$query" -F threadId="$thread_id" -F cursor="$cursor" --jq '.data' 2>/dev/null)
+    
+    local page_info nodes
+    page_info=$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('node',{}).get('comments',{}).get('pageInfo',{})))")
+    nodes=$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('node',{}).get('comments',{}).get('nodes',[])))")
+    
+    comment_ids=$(echo "$comment_ids" "$nodes" | python3 -c "import json,sys; a=json.loads(sys.stdin.readline() or '[]'); b=json.loads(sys.stdin.readline() or '[]'); a.extend(b); print(json.dumps(a))")
+    
+    local has_more
+    has_more=$(echo "$page_info" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('hasNextPage') else 'false')")
+    
+    [ "$has_more" != "true" ] && break
+    cursor=$(echo "$page_info" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('endCursor') or 'null')")
+  done
+  
+  echo "$comment_ids"
+}
+
+paged_threads='[]'
+
+while [ "$HAS_MORE_THREADS" = "true" ]; do
+  THREADS_QUERY='query($owner:String!, $repo:String!, $number:Int!, $cursor:String) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { pageInfo { hasNextPage endCursor } nodes { id } } } } } } }'
+
+  RESPONSE=$(gh api graphql \
+    -f query="$THREADS_QUERY" \
+    -f owner="$OWNER" \
+    -f repo="$REPO_NAME" \
+    -F number="$PR_NUMBER" \
+    -F cursor="$THREADS_CURSOR" \
+    --jq '.data')
+
+  THREADS_PAGE=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('repository',{}).get('pullRequest',{}).get('reviewThreads',{})))")
+  PAGE_NODES=$(echo "$THREADS_PAGE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('nodes',[])))")
+  PAGE_INFO=$(echo "$THREADS_PAGE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('pageInfo',{})))")
+
+  HAS_MORE_THREADS=$(echo "$PAGE_INFO" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('hasNextPage') else 'false')")
+  THREADS_CURSOR=$(echo "$PAGE_INFO" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('endCursor') or 'null')")
+
+  for thread in $(echo "$PAGE_NODES" | python3 -c "import json,sys; print(' '.join([t.get('id','') for t in json.load(sys.stdin)]))" 2>/dev/null); do
+    thread_json=$(echo "$PAGE_NODES" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((json.dumps(t) for t in d if t.get('id')=='$thread'), '{}'))")
+    is_resolved=$(echo "$thread_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('isResolved', False))")
+    first_comment_ids=$(echo "$thread_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps([c.get('id') for c in d.get('comments',{}).get('nodes',[]) if c.get('id')]))")
+    comments_page_info=$(echo "$thread_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('comments',{}).get('pageInfo',{})))")
+    has_more_comments=$(echo "$comments_page_info" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('hasNextPage') else 'false')")
+    
+    if [ "$has_more_comments" = "true" ]; then
+      comment_ids=$(fetch_all_thread_comments "$thread")
+    else
+      comment_ids="$first_comment_ids"
+    fi
+    
+    enriched_thread=$(echo "$thread_json" "$comment_ids" | python3 -c "import json,sys; t=json.loads(sys.stdin.readline()); cids=json.loads(sys.stdin.readline()); t['comments']={'nodes':[{'id':cid} for cid in cids]}; print(json.dumps(t))")
+    paged_threads=$(echo "$paged_threads" "$enriched_thread" | python3 -c "import json,sys; a=json.loads(sys.stdin.readline() or '[]'); b=json.loads(sys.stdin.readline()); a.append(b); print(json.dumps(a))")
+  done
+done
+
+echo "$paged_threads" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'data': {'repository': {'pullRequest': {'reviewThreads': {'nodes': d}}}}}))" > "$THREADS_JSON"
 
 python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
 import json, pathlib, re, sys
