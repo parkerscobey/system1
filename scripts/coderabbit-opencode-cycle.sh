@@ -199,7 +199,7 @@ while has_more:
         ' pageInfo { hasNextPage endCursor }'
         ' nodes { id isResolved path comments(first:100) {'
         ' pageInfo { hasNextPage endCursor }'
-        ' nodes { id body user { login } } } } } } } }'
+        ' nodes { id body author { login } } } } } } } }'
     )
     cmd = ["gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"repo={repo}", "-F", f"number={pr_number}", "-F", f"cursor={cursor or 'null'}", "--jq", ".data"]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -221,7 +221,7 @@ while has_more:
             c_cursor = comment_page_info.get("endCursor")
             while True:
                 c_cmd = ["gh", "api", "graphql", "-f", "query=" +
-                    'query($threadId:ID!, $cursor:String) { node(id:$threadId) { ... on ReviewThread { comments(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id body user { login } } } } } }',
+                    'query($threadId:ID!, $cursor:String) { node(id:$threadId) { ... on ReviewThread { comments(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id body author { login } } } } } }',
                     "-F", f"threadId={thread['id']}", "-F", f"cursor={c_cursor or 'null'}", "--jq", ".data"]
                 c_result = subprocess.run(c_cmd, capture_output=True, text=True)
                 if c_result.returncode != 0:
