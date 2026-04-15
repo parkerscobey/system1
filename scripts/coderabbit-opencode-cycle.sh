@@ -17,7 +17,7 @@ Options:
   -h, --help               Show this help
 
 What it does:
-  1. Fetches CodeRabbit comments from the PR via gh api (GraphQL + REST)
+  1. Fetches CodeRabbit review threads from the PR via GraphQL
   2. Extracts "Prompt for AI Agents" code blocks
   3. Runs opencode once per prompt, sequentially
   4. If opencode makes no changes, resolves the review thread via API
@@ -29,6 +29,7 @@ Notes:
   - By default, prompts from resolved review threads are skipped.
   - By default, opencode is told to patch and commit without extra verification.
   - No-op prompts (already addressed) resolve their review threads via GraphQL.
+  - Uses only GraphQL review threads (not REST issue comments) for reliable thread tracking.
   - Assumes opencode is already configured for non-interactive use in this repo.
 EOF
 }
@@ -165,9 +166,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ISSUE_JSON="$TMP_DIR/issues.json"
-REVIEW_JSON="$TMP_DIR/reviews.json"
-INLINE_JSON="$TMP_DIR/inline.json"
 THREADS_JSON="$TMP_DIR/threads.json"
 PROMPTS_JSON="$TMP_DIR/prompts.json"
 META_JSON="$TMP_DIR/prompt-meta.json"
@@ -175,12 +173,8 @@ META_JSON="$TMP_DIR/prompt-meta.json"
 OWNER=${REPO%%/*}
 REPO_NAME=${REPO#*/}
 
-gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > "$ISSUE_JSON"
-gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate > "$REVIEW_JSON"
-gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate > "$INLINE_JSON"
-
-# Fetch review threads with cursor-based pagination and comment-level pagination,
-# including comment bodies for prompt extraction and thread resolution tracking.
+# Fetch all review threads via GraphQL with cursor-based pagination.
+# Includes comment bodies for prompt extraction and thread_id for resolution.
 python3 - "$OWNER" "$REPO_NAME" "$PR_NUMBER" "$THREADS_JSON" <<'PY'
 import json, subprocess, sys
 
@@ -197,7 +191,7 @@ while has_more:
         ' pullRequest(number:$number) {'
         ' reviewThreads(first:100, after:$cursor) {'
         ' pageInfo { hasNextPage endCursor }'
-        ' nodes { id isResolved path comments(first:100) {'
+        ' nodes { id isResolved comments(first:100) {'
         ' pageInfo { hasNextPage endCursor }'
         ' nodes { id body author { login } } } } } } } }'
     )
@@ -248,71 +242,14 @@ with open(out_path, "w") as f:
     json.dump(output, f)
 PY
 
-# Extract prompts. Uses GraphQL comment bodies from review threads (thread_id
-# tracking) and REST API bodies from issue/review comments (no thread tracking).
-python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
+# Extract prompts from GraphQL review threads only.
+# Each prompt gets its thread_id for no-op resolution.
+python3 - "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
 import json, pathlib, re, sys
-issue_path, review_path, inline_path, threads_path, out_path, include_aggregate, include_resolved = sys.argv[1:8]
-include_aggregate = include_aggregate == "1"
-include_resolved = include_resolved == "1"
+threads_path, out_path, include_aggregate, include_resolved = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4] == "1"
 
-# Load review threads to build comment_id → thread_id mapping and detect resolved.
 threads_data = json.loads(pathlib.Path(threads_path).read_text())
 thread_nodes = (((threads_data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}).get("reviewThreads", {}).get("nodes", [])
-
-comment_to_thread = {}
-resolved_comment_ids = set()
-for thread in thread_nodes:
-    thread_id = thread.get("id")
-    is_resolved = thread.get("isResolved", False)
-    for comment in ((thread.get("comments") or {}).get("nodes") or []):
-        cid = comment.get("id")
-        if cid and thread_id:
-            comment_to_thread[cid] = thread_id
-            if is_resolved:
-                resolved_comment_ids.add(cid)
-
-# Collect sources from REST API (issues, reviews, inline PR comments).
-rest_sources = []
-for path in [issue_path, review_path, inline_path]:
-    p = pathlib.Path(path)
-    if not p.exists():
-        continue
-    try:
-        data = json.loads(p.read_text())
-    except Exception:
-        continue
-    if isinstance(data, dict):
-        data = [data]
-    for item in data:
-        user = ((item.get("user") or {}).get("login") or "")
-        body = item.get("body") or ""
-        node_id = item.get("node_id") or item.get("id") or ""
-        if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
-            continue
-        rest_sources.append({"body": body, "comment_id": str(node_id), "thread_id": ""})
-
-# Collect sources from GraphQL review threads (includes body, has thread_id).
-graphql_sources = []
-for thread in thread_nodes:
-    thread_id = thread.get("id", "")
-    for comment in ((thread.get("comments") or {}).get("nodes") or []):
-        user = ((comment.get("author") or {}).get("login") or "")
-        body = comment.get("body") or ""
-        cid = comment.get("id") or ""
-        if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
-            continue
-        if not include_resolved and cid in resolved_comment_ids:
-            continue
-        graphql_sources.append({"body": body, "comment_id": cid, "thread_id": thread_id})
-
-# Deduplicate: prefer GraphQL sources (they have thread_id). Fall back to REST.
-seen_comments = set(s["body"] for s in graphql_sources)
-all_sources = list(graphql_sources)
-for s in rest_sources:
-    if s["body"] not in seen_comments:
-        all_sources.append(s)
-        seen_comments.add(s["body"])
 
 pattern = re.compile(
     r"<summary>🤖\s*(?P<title>Prompt[^<]*)</summary>.*?```(?:\w+)?\n(?P<prompt>.*?)```",
@@ -321,26 +258,36 @@ pattern = re.compile(
 
 seen = set()
 prompts = []
-for src in all_sources:
-    for m in pattern.finditer(src["body"]):
-        title = re.sub(r"\s+", " ", m.group("title").strip())
-        prompt = m.group("prompt").strip()
-        if not prompt:
+for thread in thread_nodes:
+    is_resolved = thread.get("isResolved", False)
+    thread_id = thread.get("id", "")
+    if is_resolved and not include_resolved:
+        continue
+    for comment in ((thread.get("comments") or {}).get("nodes") or []):
+        user = ((comment.get("author") or {}).get("login") or "")
+        body = comment.get("body") or ""
+        cid = comment.get("id") or ""
+        if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
             continue
-        aggregate = "all review comments" in title.lower()
-        if aggregate and not include_aggregate:
-            continue
-        key = (title, prompt)
-        if key in seen:
-            continue
-        seen.add(key)
-        prompts.append({
-            "title": title,
-            "prompt": prompt,
-            "aggregate": aggregate,
-            "comment_id": src["comment_id"],
-            "thread_id": src.get("thread_id", ""),
-        })
+        for m in pattern.finditer(body):
+            title = re.sub(r"\s+", " ", m.group("title").strip())
+            prompt = m.group("prompt").strip()
+            if not prompt:
+                continue
+            aggregate = "all review comments" in title.lower()
+            if aggregate and not include_aggregate:
+                continue
+            key = (title, prompt)
+            if key in seen:
+                continue
+            seen.add(key)
+            prompts.append({
+                "title": title,
+                "prompt": prompt,
+                "aggregate": aggregate,
+                "comment_id": cid,
+                "thread_id": thread_id,
+            })
 
 pathlib.Path(out_path).write_text(json.dumps(prompts, indent=2))
 PY
