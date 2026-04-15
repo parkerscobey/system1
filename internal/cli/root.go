@@ -20,6 +20,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(newDoctorCmd(ctx))
 	cmd.AddCommand(newSessionCmd(ctx))
 	cmd.AddCommand(newIntrospectCmd(ctx))
+	cmd.AddCommand(newObserveCmd(ctx))
 
 	return cmd
 }

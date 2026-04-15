@@ -8,15 +8,19 @@ import (
 	"github.com/XferOps/system1/internal/daemon"
 	"github.com/XferOps/system1/internal/introspect"
 	"github.com/XferOps/system1/internal/logging"
+	"github.com/XferOps/system1/internal/obs"
 	"github.com/XferOps/system1/internal/session"
 )
 
 type App struct {
-	Config         config.Config
-	Logger         *slog.Logger
-	SessionService *session.Service
-	Introspection  *introspect.Service
-	Daemon         *daemon.Runner
+	Config             config.Config
+	Logger             *slog.Logger
+	SessionService     *session.Service
+	Introspection      *introspect.Service
+	Daemon             *daemon.Runner
+	Health             *obs.Health
+	DecisionLog        *obs.DecisionLog
+	IntrospectionTrace *obs.IntrospectionTrace
 }
 
 func New() (*App, error) {
@@ -30,12 +34,19 @@ func New() (*App, error) {
 	introspectionSvc := introspect.NewService(logger, cfg)
 	daemonRunner := daemon.NewRunner(logger, cfg)
 
+	health := obs.NewHealth(logger)
+	decisionLog := obs.NewDecisionLog(logger)
+	introspectionTrace := obs.NewIntrospectionTrace(logger)
+
 	return &App{
-		Config:         cfg,
-		Logger:         logger,
-		SessionService: sessionSvc,
-		Introspection:  introspectionSvc,
-		Daemon:         daemonRunner,
+		Config:             cfg,
+		Logger:             logger,
+		SessionService:     sessionSvc,
+		Introspection:      introspectionSvc,
+		Daemon:             daemonRunner,
+		Health:             health,
+		DecisionLog:        decisionLog,
+		IntrospectionTrace: introspectionTrace,
 	}, nil
 }
 
