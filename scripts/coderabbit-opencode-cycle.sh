@@ -203,7 +203,12 @@ while has_more:
     )
     cmd = ["gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"repo={repo}", "-F", f"number={pr_number}", "-F", f"cursor={cursor or 'null'}", "--jq", ".data"]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    data = json.loads(result.stdout)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh api failed (code {result.returncode}): {cmd}\nstderr: {result.stderr}\nstdout: {result.stdout}")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"failed to parse JSON from gh api: {cmd}\nstdout: {result.stdout[:500]}\nerror: {e}")
     threads_obj = data["repository"]["pullRequest"]["reviewThreads"]
     page_info = threads_obj["pageInfo"]
 
@@ -219,7 +224,12 @@ while has_more:
                     "query($threadId:ID!, $cursor:String) { node(id:$threadId) { ... on ReviewThread { comments(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id } } } } }",
                     "-F", f"threadId={thread['id']}", "-F", f"cursor={c_cursor or 'null'}", "--jq", ".data"]
                 c_result = subprocess.run(c_cmd, capture_output=True, text=True)
-                c_data = json.loads(c_result.stdout)
+                if c_result.returncode != 0:
+                    raise RuntimeError(f"gh api failed (code {c_result.returncode}): {c_cmd}\nstderr: {c_result.stderr}\nstdout: {c_result.stdout}")
+                try:
+                    c_data = json.loads(c_result.stdout)
+                except json.JSONDecodeError as e:
+                    raise RuntimeError(f"failed to parse JSON from gh api: {c_cmd}\nstdout: {c_result.stdout[:500]}\nerror: {e}")
                 c_comms = c_data["node"]["comments"]
                 comment_ids.extend(c.get("id") for c in c_comms.get("nodes", []) if c.get("id"))
                 c_pi = c_comms.get("pageInfo", {})
