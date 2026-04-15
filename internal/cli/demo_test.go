@@ -178,6 +178,10 @@ func skipSQLiteFTSTest(t *testing.T) {
 			t.Fatalf("Cannot create file store: %v", err)
 		}
 	}
-	store.Close()
-	os.RemoveAll(tmpDir)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Failed to close store: %v", err)
+	}
+	if err := os.RemoveAll(tmpDir); err != nil {
+		t.Fatalf("Failed to remove temp dir: %v", err)
+	}
 }
