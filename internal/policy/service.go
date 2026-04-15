@@ -33,11 +33,11 @@ const (
 )
 
 type Service struct {
-	logger  *slog.Logger
-	cfg    config.Config
-	backend *file.Store
-	mu      sync.RWMutex
-	deferred    map[string]artifacts.CandidateArtifact
+	logger       *slog.Logger
+	cfg          config.Config
+	backend      *file.Store
+	mu           sync.RWMutex
+	deferred     map[string]artifacts.CandidateArtifact
 	enabledTypes map[string]bool
 }
 
@@ -384,4 +384,3 @@ func computeOverlap(a, b string) float64 {
 
 	return float64(intersection) / float64(minLen)
 }
-

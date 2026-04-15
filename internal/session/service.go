@@ -13,8 +13,8 @@ import (
 )
 
 type StartResult struct {
-	AmbientContext []string       `json:"ambient_context"`
-	WakingMind     string         `json:"waking_mind"`
+	AmbientContext []string                      `json:"ambient_context"`
+	WakingMind     string                        `json:"waking_mind"`
 	Artifacts      []artifacts.PersistedArtifact `json:"artifacts"`
 }
 
@@ -50,7 +50,7 @@ func (s *Service) Start(ctx context.Context) (StartResult, error) {
 
 	return StartResult{
 		AmbientContext: ambientIDs,
-		WakingMind:    wakingMind,
+		WakingMind:     wakingMind,
 		Artifacts:      ambientArtifacts,
 	}, nil
 }
