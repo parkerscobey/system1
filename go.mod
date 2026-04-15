@@ -3,6 +3,8 @@ module github.com/XferOps/system1
 go 1.24.0
 
 require (
+	github.com/google/uuid v1.6.0
+	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/sync v0.18.0
 )

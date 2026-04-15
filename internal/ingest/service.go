@@ -107,13 +107,6 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 		if _, err := file.Seek(cursor.LastOffset, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seek to cursor: %w", err)
 		}
-		if cursor.LastEvent != "" {
-			reader := bufio.NewReader(file)
-			_, err := reader.ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
-				return nil, fmt.Errorf("skip past last event: %w", err)
-			}
-		}
 	}
 
 	reader := bufio.NewReader(file)
@@ -154,7 +147,12 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	}
 
 	stats.SpansBuilt = len(spans)
-	stats.LastOffset = cursor.LastOffset + int64(reader.Buffered())
+
+	lastOffset, err := currentReadOffset(file, reader)
+	if err != nil {
+		return nil, fmt.Errorf("determine current read offset: %w", err)
+	}
+	stats.LastOffset = lastOffset
 
 	if len(spans) > 0 {
 		lastSpan := spans[len(spans)-1]
@@ -346,6 +344,15 @@ func (s *Service) saveCursor(ctx context.Context, cursor *CursorState) error {
 
 func (s *Service) GetStatus(ctx context.Context) (*CursorState, error) {
 	return s.loadCursor(ctx)
+}
+
+func currentReadOffset(file *os.File, reader *bufio.Reader) (int64, error) {
+	offset, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+
+	return offset - int64(reader.Buffered()), nil
 }
 
 func generateSpanID() string {
