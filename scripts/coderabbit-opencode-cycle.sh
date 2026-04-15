@@ -265,6 +265,8 @@ while IFS= read -r prompt_file; do
   PROMPT_FILES+=("$prompt_file")
 done < <(find "$TMP_DIR" -maxdepth 1 -name '*.txt' | sort)
 
+require_bin opencode
+
 for prompt_file in "${PROMPT_FILES[@]}"; do
   title=$(basename "$prompt_file")
   echo
@@ -277,8 +279,6 @@ for prompt_file in "${PROMPT_FILES[@]}"; do
     echo "---"
     continue
   fi
-
-  require_bin opencode
 
   PROMPT_CONTENT=$(cat "$prompt_file")
   if [[ "$VERIFY" == "1" ]]; then
