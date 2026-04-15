@@ -15,12 +15,6 @@ import (
 
 var ErrNoEnabledTypes = fmt.Errorf("no enabled types configured")
 
-const (
-	ConfidenceLow    = "low"
-	ConfidenceMid  = "medium"
-	ConfidenceHigh = "high"
-)
-
 type Service struct {
 	logger       *slog.Logger
 	cfg          config.Config
@@ -100,18 +94,18 @@ func (s *Service) extractSignal(ctx context.Context, span artifacts.EventSpan) *
 
 	spanText := s.summarizeSpan(span)
 	candidate := &artifacts.CandidateArtifact{
-		CandidateID:    generateCandidateID(),
+		CandidateID:   generateCandidateID(),
 		ArtifactType:  signalType,
 		ProposedScope: signalScope,
-		Title:       s.generateTitle(signalType, spanText),
-		Body:        s.generateBody(signalType, spanText),
-		Confidence:  signalConfidence,
+		Title:         s.generateTitle(signalType, spanText),
+		Body:          s.generateBody(signalType, spanText),
+		Confidence:    signalConfidence,
 		Provenance: artifacts.Provenance{
 			SpanIDs:          []string{span.SpanID},
-			EventIDs:        span.EventIDs,
-			RawRefs:         span.RawRefs,
-			SessionIDs:     []string{span.SessionID},
-			SourceIDs:      []string{span.SourceID},
+			EventIDs:         span.EventIDs,
+			RawRefs:          span.RawRefs,
+			SessionIDs:       []string{span.SessionID},
+			SourceIDs:        []string{span.SourceID},
 			EvidenceSnippets: s.extractEvidence(span),
 		},
 		Status:    artifacts.StatusProposed,
@@ -125,8 +119,8 @@ func (s *Service) detectType(ctx context.Context, content string) string {
 	content = strings.ToLower(content)
 
 	typeFlags := map[string]int{
-		"MEMORY":     0,
-		"KNOWLEDGE":  0,
+		"MEMORY":    0,
+		"KNOWLEDGE": 0,
 	}
 
 	patterns := map[string][]string{
@@ -201,17 +195,17 @@ func (s *Service) detectConfidence(ctx context.Context, content string) string {
 
 	for _, phrase := range highConfidence {
 		if strings.Contains(content, phrase) {
-			return ConfidenceHigh
+			return artifacts.ConfidenceHigh
 		}
 	}
 
 	for _, phrase := range lowConfidence {
 		if strings.Contains(content, phrase) {
-			return ConfidenceLow
+			return artifacts.ConfidenceLow
 		}
 	}
 
-	return ConfidenceMid
+	return artifacts.ConfidenceMid
 }
 
 func (s *Service) summarizeSpan(span artifacts.EventSpan) string {

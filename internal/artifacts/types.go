@@ -48,6 +48,12 @@ const (
 	StatusDeferred CandidateStatus = "deferred"
 )
 
+const (
+	ConfidenceLow  = "low"
+	ConfidenceMid  = "medium"
+	ConfidenceHigh = "high"
+)
+
 type CandidateArtifact struct {
 	CandidateID    string          `json:"candidate_id"`
 	ArtifactType   string          `json:"artifact_type"`
