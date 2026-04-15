@@ -38,10 +38,21 @@ func TestDemoAcceptancePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Fatalf("close error: %v", cerr)
+		}
+	}()
 	for _, e := range events {
-		f.WriteString(e + "\n")
+		line := e + "\n"
+		n, err := f.WriteString(line)
+		if err != nil {
+			t.Fatalf("write error: %v", err)
+		}
+		if n != len(line) {
+			t.Fatalf("unexpected write length: got %d, want %d", n, len(line))
+		}
 	}
-	f.Close()
 
 	cfg := config.Config{
 		StateDir:        filepath.Join(tmpDir, ".system1"),
