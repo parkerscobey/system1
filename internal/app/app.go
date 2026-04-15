@@ -13,11 +13,11 @@ import (
 )
 
 type App struct {
-	Config          config.Config
-	Logger          *slog.Logger
-	SessionService  *session.Service
-	Introspection   *introspect.Service
-	ExtractService  *extract.Service
+	Config         config.Config
+	Logger         *slog.Logger
+	SessionService *session.Service
+	Introspection  *introspect.Service
+	ExtractService *extract.Service
 	Daemon         *daemon.Runner
 }
 
@@ -34,11 +34,11 @@ func New() (*App, error) {
 	daemonRunner := daemon.NewRunner(logger, cfg)
 
 	return &App{
-		Config:          cfg,
-		Logger:          logger,
-		SessionService:  sessionSvc,
+		Config:         cfg,
+		Logger:         logger,
+		SessionService: sessionSvc,
 		Introspection:  introspectionSvc,
-		ExtractService:  extractSvc,
+		ExtractService: extractSvc,
 		Daemon:         daemonRunner,
 	}, nil
 }
