@@ -71,4 +71,18 @@ make test
 - introspection is MCP-first, CLI-mirrored for development and debugging
 - no fake abstractions beyond what the MVP needs
 
+## MVP explicitly out of scope
+
+The MVP deliberately excludes:
+
+- multi-agent multiplexing (single agent only)
+- Hizal backend integration (file backend only)
+- dynamic focus-shift-driven ambient refresh (startup-only)
+- rich introspection depth beyond one configurable extra pass
+- setup wizard and runtime reconfiguration
+- local model support and host capability detection
+- production-grade security hardening for multi-agent isolation
+
+These will be addressed in post-MVP tickets.
+
 See `VISION.md` for the product direction.
