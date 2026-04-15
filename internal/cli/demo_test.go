@@ -130,35 +130,31 @@ func TestDemoAcceptancePath(t *testing.T) {
 		t.Fatal("expected persisted artifacts, got none")
 	}
 
-	if len(persisted) > 0 {
-		sessionSvc := session.NewService(logger, cfg, backend)
-		sessionResult, err := sessionSvc.Start(ctx)
-		if err != nil {
-			t.Fatalf("session start: %v", err)
-		}
-
-		if len(sessionResult.AmbientContext) == 0 {
-			t.Fatal("expected ambient context items, got none")
-		}
-		if sessionResult.WakingMind == "" {
-			t.Fatal("expected waking mind content, got empty")
-		}
-
-		introspectionSvc := introspect.NewService(logger, cfg, backend)
-		result, err := introspectionSvc.Query(ctx, "preferences", false)
-		if err != nil {
-			t.Fatalf("introspect: %v", err)
-		}
-
-		if result.Answer == "" {
-			t.Fatal("expected non-empty answer from introspection, got empty")
-		}
-
-		t.Logf("Full acceptance path completed: %d artifacts persisted, %d in ambient context",
-			len(persisted), len(sessionResult.AmbientContext))
-	} else {
-		t.Log("Note: No artifacts were persisted in this run - this is expected for the MVP thin demo")
+	sessionSvc := session.NewService(logger, cfg, backend)
+	sessionResult, err := sessionSvc.Start(ctx)
+	if err != nil {
+		t.Fatalf("session start: %v", err)
 	}
+
+	if len(sessionResult.AmbientContext) == 0 {
+		t.Fatal("expected ambient context items, got none")
+	}
+	if sessionResult.WakingMind == "" {
+		t.Fatal("expected waking mind content, got empty")
+	}
+
+	introspectionSvc := introspect.NewService(logger, cfg, backend)
+	result, err := introspectionSvc.Query(ctx, "preferences", false)
+	if err != nil {
+		t.Fatalf("introspect: %v", err)
+	}
+
+	if result.Answer == "" {
+		t.Fatal("expected non-empty answer from introspection, got empty")
+	}
+
+	t.Logf("Full acceptance path completed: %d artifacts persisted, %d in ambient context",
+		len(persisted), len(sessionResult.AmbientContext))
 }
 
 func skipSQLiteFTSTest(t *testing.T) {
@@ -184,38 +180,4 @@ func skipSQLiteFTSTest(t *testing.T) {
 	}
 	store.Close()
 	os.RemoveAll(tmpDir)
-}
-
-func generateTestSpans() []artifacts.EventSpan {
-	return []artifacts.EventSpan{
-		{
-			SpanID:         "span_test_1",
-			SpanType:       "segment",
-			SourceID:       "test_agent",
-			SessionID:      "test_session",
-			StartEventID:   "evt_1",
-			EndEventID:     "evt_2",
-			EventIDs:       []string{"evt_1", "evt_2"},
-			RawRefs:        []string{testEvents[0], testEvents[1]},
-			BoundaryReason: "eof",
-		},
-		{
-			SpanID:         "span_test_2",
-			SpanType:       "segment",
-			SourceID:       "test_agent",
-			SessionID:      "test_session",
-			StartEventID:   "evt_3",
-			EndEventID:     "evt_4",
-			EventIDs:       []string{"evt_3", "evt_4"},
-			RawRefs:        []string{testEvents[2], testEvents[3]},
-			BoundaryReason: "eof",
-		},
-	}
-}
-
-var testEvents = []string{
-	`{"event_id":"evt_1","content":"I prefer clear APIs and well documented code"}`,
-	`{"event_id":"evt_2","content":"Noted your preference for clear APIs and good documentation"}`,
-	`{"event_id":"evt_3","content":"The Go project uses cobra and sqlite3"}`,
-	`{"event_id":"evt_4","content":"Understood - Go with cobra CLI and sqlite3 storage"}`,
 }
