@@ -319,7 +319,9 @@ while IFS= read -r prompt_file; do
   PROMPT_FILES+=("$prompt_file")
 done < <(find "$TMP_DIR" -maxdepth 1 -name '*.txt' | sort)
 
-require_bin opencode
+if [[ "$DRY_RUN" != "1" ]]; then
+  require_bin opencode
+fi
 
 for prompt_file in "${PROMPT_FILES[@]}"; do
   title=$(basename "$prompt_file")
