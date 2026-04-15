@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -48,6 +49,31 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(artifact_type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_scope ON artifacts(scope);
 CREATE INDEX IF NOT EXISTS idx_artifacts_written_at ON artifacts(written_at);
 CREATE INDEX IF NOT EXISTS idx_artifacts_candidate_id ON artifacts(candidate_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts USING fts5(
+	persisted_id,
+	title,
+	body,
+	content='artifacts',
+	content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS artifacts_ai AFTER INSERT ON artifacts BEGIN
+	INSERT INTO artifacts_fts(rowid, persisted_id, title, body)
+	VALUES (new.rowid, new.persisted_id, new.title, new.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS artifacts_ad AFTER DELETE ON artifacts BEGIN
+	INSERT INTO artifacts_fts(artifacts_fts, rowid, persisted_id, title, body)
+	VALUES ('delete', old.rowid, old.persisted_id, old.title, old.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS artifacts_au AFTER UPDATE ON artifacts BEGIN
+	INSERT INTO artifacts_fts(artifacts_fts, rowid, persisted_id, title, body)
+	VALUES ('delete', old.rowid, old.persisted_id, old.title, old.body);
+	INSERT INTO artifacts_fts(rowid, persisted_id, title, body)
+	VALUES (new.rowid, new.persisted_id, new.title, new.body);
+END;
 
 CREATE TABLE IF NOT EXISTS cursors (
 	cursor_id TEXT PRIMARY KEY,
@@ -101,10 +127,11 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 	if exists {
 		return ErrAlreadyExists
 	}
-	jsonPath := filepath.Join(s.cfg.ArtifactsDir, a.PersistedID+".json")
-	if err := os.MkdirAll(s.cfg.ArtifactsDir, 0755); err != nil {
+	scopeDir := filepath.Join(s.cfg.ArtifactsDir, strings.ToLower(a.Scope))
+	if err := os.MkdirAll(scopeDir, 0755); err != nil {
 		return fmt.Errorf("create artifacts dir: %w", err)
 	}
+	jsonPath := filepath.Join(scopeDir, a.PersistedID+".json")
 	data, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal artifact: %w", err)
@@ -139,6 +166,16 @@ func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) 
 
 func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]artifacts.PersistedArtifact, error) {
 	return s.db.FindBounded(ctx, since, until)
+}
+
+func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifacts.PersistedArtifact, error) {
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	return s.db.Search(ctx, query, limit)
 }
 
 func (s *Store) Close() error {
@@ -276,6 +313,21 @@ func (db *DB) FindBounded(ctx context.Context, since, until time.Time) ([]artifa
 		SELECT persisted_id, artifact_type, scope, title, body, confidence, candidate_id, written_at
 		FROM artifacts WHERE written_at >= ? AND written_at <= ? ORDER BY written_at DESC`,
 		since.Unix(), until.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanArtifacts(rows)
+}
+
+func (db *DB) Search(ctx context.Context, query string, limit int) ([]artifacts.PersistedArtifact, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT a.persisted_id, a.artifact_type, a.scope, a.title, a.body, a.confidence, a.candidate_id, a.written_at
+		FROM artifacts a
+		JOIN artifacts_fts fts ON a.rowid = fts.rowid
+		WHERE artifacts_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?`, query, limit)
 	if err != nil {
 		return nil, err
 	}
