@@ -129,7 +129,7 @@ if [[ -z "$BRANCH" ]]; then
   exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
   echo "Working tree is not clean. Commit or stash changes first." >&2
   exit 1
 fi
