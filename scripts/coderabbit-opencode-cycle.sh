@@ -17,7 +17,7 @@ Options:
   -h, --help               Show this help
 
 What it does:
-  1. Fetches CodeRabbit comments from the PR via gh api
+  1. Fetches CodeRabbit comments from the PR via gh api (GraphQL + REST)
   2. Extracts "Prompt for AI Agents" code blocks
   3. Runs opencode once per prompt, sequentially
   4. If opencode makes no changes, resolves the review thread via API
@@ -149,6 +149,16 @@ if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --
   exit 1
 fi
 
+if [[ -z "$REPO" ]]; then
+  echo "Invalid --repo value: expected OWNER/REPO" >&2
+  exit 1
+fi
+
+if [[ ! "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
+  echo "Invalid --repo value: expected OWNER/REPO" >&2
+  exit 1
+fi
+
 TMP_DIR=$(mktemp -d)
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -162,16 +172,6 @@ THREADS_JSON="$TMP_DIR/threads.json"
 PROMPTS_JSON="$TMP_DIR/prompts.json"
 META_JSON="$TMP_DIR/prompt-meta.json"
 
-if [[ -z "$REPO" ]]; then
-  echo "Invalid --repo value: expected OWNER/REPO" >&2
-  exit 1
-fi
-
-if [[ ! "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
-  echo "Invalid --repo value: expected OWNER/REPO" >&2
-  exit 1
-fi
-
 OWNER=${REPO%%/*}
 REPO_NAME=${REPO#*/}
 
@@ -179,7 +179,8 @@ gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > "$ISSUE_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate > "$REVIEW_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate > "$INLINE_JSON"
 
-# Fetch review threads with cursor-based pagination and comment-level pagination.
+# Fetch review threads with cursor-based pagination and comment-level pagination,
+# including comment bodies for prompt extraction and thread resolution tracking.
 python3 - "$OWNER" "$REPO_NAME" "$PR_NUMBER" "$THREADS_JSON" <<'PY'
 import json, subprocess, sys
 
@@ -190,16 +191,15 @@ cursor = None
 has_more = True
 
 while has_more:
-    
     query = (
         'query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {'
         ' repository(owner:$owner, name:$repo) {'
         ' pullRequest(number:$number) {'
         ' reviewThreads(first:100, after:$cursor) {'
         ' pageInfo { hasNextPage endCursor }'
-        ' nodes { id isResolved comments(first:100) {'
+        ' nodes { id isResolved path comments(first:100) {'
         ' pageInfo { hasNextPage endCursor }'
-        ' nodes { id } } } } } } }'
+        ' nodes { id body user { login } } } } } } } }'
     )
     cmd = ["gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"repo={repo}", "-F", f"number={pr_number}", "-F", f"cursor={cursor or 'null'}", "--jq", ".data"]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -215,29 +215,29 @@ while has_more:
     for thread in threads_obj["nodes"]:
         comment_data = thread.get("comments") or {}
         comment_page_info = comment_data.get("pageInfo") or {}
-        comment_ids = [c.get("id") for c in comment_data.get("nodes", []) if c.get("id")]
+        comment_nodes = comment_data.get("nodes", [])
 
         if comment_page_info.get("hasNextPage"):
             c_cursor = comment_page_info.get("endCursor")
             while True:
                 c_cmd = ["gh", "api", "graphql", "-f", "query=" +
-                    "query($threadId:ID!, $cursor:String) { node(id:$threadId) { ... on ReviewThread { comments(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id } } } } }",
+                    'query($threadId:ID!, $cursor:String) { node(id:$threadId) { ... on ReviewThread { comments(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id body user { login } } } } } }',
                     "-F", f"threadId={thread['id']}", "-F", f"cursor={c_cursor or 'null'}", "--jq", ".data"]
                 c_result = subprocess.run(c_cmd, capture_output=True, text=True)
                 if c_result.returncode != 0:
-                    raise RuntimeError(f"gh api failed (code {c_result.returncode}): {c_cmd}\nstderr: {c_result.stderr}\nstdout: {c_result.stdout}")
+                    raise RuntimeError(f"gh api failed (code {c_result.returncode}): {c_cmd}\nstderr: {c_result.stderr}")
                 try:
                     c_data = json.loads(c_result.stdout)
                 except json.JSONDecodeError as e:
-                    raise RuntimeError(f"failed to parse JSON from gh api: {c_cmd}\nstdout: {c_result.stdout[:500]}\nerror: {e}")
+                    raise RuntimeError(f"failed to parse JSON: {c_cmd}\nstdout: {c_result.stdout[:500]}")
                 c_comms = c_data["node"]["comments"]
-                comment_ids.extend(c.get("id") for c in c_comms.get("nodes", []) if c.get("id"))
+                comment_nodes.extend(c_comms.get("nodes", []))
                 c_pi = c_comms.get("pageInfo", {})
                 if not c_pi.get("hasNextPage"):
                     break
                 c_cursor = c_pi.get("endCursor")
 
-        thread["comments"] = {"nodes": [{"id": cid} for cid in comment_ids]}
+        thread["comments"] = {"nodes": comment_nodes}
         all_threads.append(thread)
 
     has_more = page_info.get("hasNextPage", False)
@@ -248,35 +248,32 @@ with open(out_path, "w") as f:
     json.dump(output, f)
 PY
 
-# Extract prompts with comment_id for thread resolution tracking.
+# Extract prompts. Uses GraphQL comment bodies from review threads (thread_id
+# tracking) and REST API bodies from issue/review comments (no thread tracking).
 python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
 import json, pathlib, re, sys
 issue_path, review_path, inline_path, threads_path, out_path, include_aggregate, include_resolved = sys.argv[1:8]
 include_aggregate = include_aggregate == "1"
 include_resolved = include_resolved == "1"
 
-# Build comment_node_id → review thread_id mapping.
+# Load review threads to build comment_id → thread_id mapping and detect resolved.
 threads_data = json.loads(pathlib.Path(threads_path).read_text())
 thread_nodes = (((threads_data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}).get("reviewThreads", {}).get("nodes", [])
+
 comment_to_thread = {}
+resolved_comment_ids = set()
 for thread in thread_nodes:
     thread_id = thread.get("id")
+    is_resolved = thread.get("isResolved", False)
     for comment in ((thread.get("comments") or {}).get("nodes") or []):
         cid = comment.get("id")
         if cid and thread_id:
             comment_to_thread[cid] = thread_id
+            if is_resolved:
+                resolved_comment_ids.add(cid)
 
-resolved_comment_ids = set()
-for thread in thread_nodes:
-    if not thread.get("isResolved"):
-        continue
-    for comment in ((thread.get("comments") or {}).get("nodes") or []):
-        comment_id = comment.get("id")
-        if comment_id:
-            resolved_comment_ids.add(comment_id)
-
-# Collect comment bodies with their node IDs.
-sources = []
+# Collect sources from REST API (issues, reviews, inline PR comments).
+rest_sources = []
 for path in [issue_path, review_path, inline_path]:
     p = pathlib.Path(path)
     if not p.exists():
@@ -293,9 +290,29 @@ for path in [issue_path, review_path, inline_path]:
         node_id = item.get("node_id") or item.get("id") or ""
         if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
             continue
-        if not include_resolved and node_id in resolved_comment_ids:
+        rest_sources.append({"body": body, "comment_id": str(node_id), "thread_id": ""})
+
+# Collect sources from GraphQL review threads (includes body, has thread_id).
+graphql_sources = []
+for thread in thread_nodes:
+    thread_id = thread.get("id", "")
+    for comment in ((thread.get("comments") or {}).get("nodes") or []):
+        user = ((comment.get("user") or {}).get("login") or "")
+        body = comment.get("body") or ""
+        cid = comment.get("id") or ""
+        if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
             continue
-        sources.append({"body": body, "comment_id": node_id})
+        if not include_resolved and cid in resolved_comment_ids:
+            continue
+        graphql_sources.append({"body": body, "comment_id": cid, "thread_id": thread_id})
+
+# Deduplicate: prefer GraphQL sources (they have thread_id). Fall back to REST.
+seen_comments = set(s["body"] for s in graphql_sources)
+all_sources = list(graphql_sources)
+for s in rest_sources:
+    if s["body"] not in seen_comments:
+        all_sources.append(s)
+        seen_comments.add(s["body"])
 
 pattern = re.compile(
     r"<summary>🤖\s*(?P<title>Prompt[^<]*)</summary>.*?```(?:\w+)?\n(?P<prompt>.*?)```",
@@ -304,7 +321,7 @@ pattern = re.compile(
 
 seen = set()
 prompts = []
-for src in sources:
+for src in all_sources:
     for m in pattern.finditer(src["body"]):
         title = re.sub(r"\s+", " ", m.group("title").strip())
         prompt = m.group("prompt").strip()
@@ -317,14 +334,12 @@ for src in sources:
         if key in seen:
             continue
         seen.add(key)
-        cid = src["comment_id"]
-        thread_id = comment_to_thread.get(cid, "")
         prompts.append({
             "title": title,
             "prompt": prompt,
             "aggregate": aggregate,
-            "comment_id": cid,
-            "thread_id": thread_id,
+            "comment_id": src["comment_id"],
+            "thread_id": src.get("thread_id", ""),
         })
 
 pathlib.Path(out_path).write_text(json.dumps(prompts, indent=2))
@@ -424,7 +439,7 @@ PY
         -f query='mutation($threadId:ID!) { resolveReviewThread(input:{threadId:$threadId}) { thread { id } } }' \
         -F threadId="$THREAD_ID" --jq '.data.resolveReviewThread.thread.id' >/dev/null 2>&1 || true
     else
-      echo "  (no changes — no thread ID to resolve)"
+      echo "  (no changes — no thread ID, skipping resolution)"
     fi
   fi
 done
