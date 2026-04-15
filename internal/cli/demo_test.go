@@ -79,7 +79,7 @@ func TestDemoAcceptancePath(t *testing.T) {
 	}
 
 	if len(candidates) == 0 {
-		t.Log("Note: No candidates extracted - may need more signal in test data")
+		t.Fatal("expected candidates to be extracted, got none")
 	}
 
 	backend, err := file.NewStore(logger, cfg)
@@ -112,6 +112,10 @@ func TestDemoAcceptancePath(t *testing.T) {
 		persisted = append(persisted, p)
 	}
 
+	if len(persisted) == 0 {
+		t.Fatal("expected persisted artifacts, got none")
+	}
+
 	if len(persisted) > 0 {
 		sessionSvc := session.NewService(logger, cfg, backend)
 		sessionResult, err := sessionSvc.Start(ctx)
@@ -120,10 +124,10 @@ func TestDemoAcceptancePath(t *testing.T) {
 		}
 
 		if len(sessionResult.AmbientContext) == 0 {
-			t.Error("expected ambient context items")
+			t.Fatal("expected ambient context items, got none")
 		}
 		if sessionResult.WakingMind == "" {
-			t.Error("expected waking mind content")
+			t.Fatal("expected waking mind content, got empty")
 		}
 
 		introspectionSvc := introspect.NewService(logger, cfg, backend)
@@ -133,7 +137,7 @@ func TestDemoAcceptancePath(t *testing.T) {
 		}
 
 		if result.Answer == "" {
-			t.Error("expected non-empty answer")
+			t.Fatal("expected non-empty answer from introspection, got empty")
 		}
 
 		t.Logf("Full acceptance path completed: %d artifacts persisted, %d in ambient context",

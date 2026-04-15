@@ -40,7 +40,7 @@ type Service struct {
 	cfg        config.Config
 	cursorPath string
 	quietConf  QuietPeriodConfig
-	lastSpans []artifacts.EventSpan
+	lastSpans  []artifacts.EventSpan
 }
 
 type IngestStats struct {
