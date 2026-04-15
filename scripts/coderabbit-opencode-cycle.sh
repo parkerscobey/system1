@@ -332,10 +332,12 @@ for prompt_file in "${PROMPT_FILES[@]}"; do
   if [[ "$DRY_RUN" == "1" ]]; then
     line_count=$(wc -l < "$prompt_file")
     head -n 220 "$prompt_file"
-    echo
-    echo "---"
-    echo "[Prompt truncated to 220 lines; total lines: $line_count]"
-    echo "---"
+    if [[ $line_count -gt 220 ]]; then
+      echo
+      echo "---"
+      echo "[Prompt truncated to 220 lines; total lines: $line_count]"
+      echo "---"
+    fi
     continue
   fi
 
