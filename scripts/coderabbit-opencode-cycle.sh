@@ -162,6 +162,16 @@ THREADS_JSON="$TMP_DIR/threads.json"
 PROMPTS_JSON="$TMP_DIR/prompts.json"
 META_JSON="$TMP_DIR/prompt-meta.json"
 
+if [[ -z "$REPO" ]]; then
+  echo "Invalid --repo value: expected OWNER/REPO" >&2
+  exit 1
+fi
+
+if [[ ! "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
+  echo "Invalid --repo value: expected OWNER/REPO" >&2
+  exit 1
+fi
+
 OWNER=${REPO%%/*}
 REPO_NAME=${REPO#*/}
 
