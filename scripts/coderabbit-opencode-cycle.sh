@@ -20,7 +20,7 @@ What it does:
   1. Fetches CodeRabbit comments from the PR via gh api
   2. Extracts "Prompt for AI Agents" code blocks
   3. Runs opencode once per prompt, sequentially
-  4. Appends a default patch-and-commit instruction to each prompt
+  4. If opencode makes no changes, resolves the review thread via API
   5. Pushes the branch when done (unless --no-push)
 
 Notes:
@@ -28,6 +28,7 @@ Notes:
     to avoid duplicating the individual prompt runs.
   - By default, prompts from resolved review threads are skipped.
   - By default, opencode is told to patch and commit without extra verification.
+  - No-op prompts (already addressed) resolve their review threads via GraphQL.
   - Assumes opencode is already configured for non-interactive use in this repo.
 EOF
 }
@@ -159,6 +160,7 @@ REVIEW_JSON="$TMP_DIR/reviews.json"
 INLINE_JSON="$TMP_DIR/inline.json"
 THREADS_JSON="$TMP_DIR/threads.json"
 PROMPTS_JSON="$TMP_DIR/prompts.json"
+META_JSON="$TMP_DIR/prompt-meta.json"
 
 OWNER=${REPO%%/*}
 REPO_NAME=${REPO#*/}
@@ -226,15 +228,25 @@ with open(out_path, "w") as f:
     json.dump(output, f)
 PY
 
+# Extract prompts with comment_id for thread resolution tracking.
 python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
 import json, pathlib, re, sys
 issue_path, review_path, inline_path, threads_path, out_path, include_aggregate, include_resolved = sys.argv[1:8]
 include_aggregate = include_aggregate == "1"
 include_resolved = include_resolved == "1"
 
-resolved_comment_ids = set()
+# Build comment_node_id → review thread_id mapping.
 threads_data = json.loads(pathlib.Path(threads_path).read_text())
 thread_nodes = (((threads_data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}).get("reviewThreads", {}).get("nodes", [])
+comment_to_thread = {}
+for thread in thread_nodes:
+    thread_id = thread.get("id")
+    for comment in ((thread.get("comments") or {}).get("nodes") or []):
+        cid = comment.get("id")
+        if cid and thread_id:
+            comment_to_thread[cid] = thread_id
+
+resolved_comment_ids = set()
 for thread in thread_nodes:
     if not thread.get("isResolved"):
         continue
@@ -243,6 +255,7 @@ for thread in thread_nodes:
         if comment_id:
             resolved_comment_ids.add(comment_id)
 
+# Collect comment bodies with their node IDs.
 sources = []
 for path in [issue_path, review_path, inline_path]:
     p = pathlib.Path(path)
@@ -262,7 +275,7 @@ for path in [issue_path, review_path, inline_path]:
             continue
         if not include_resolved and node_id in resolved_comment_ids:
             continue
-        sources.append(body)
+        sources.append({"body": body, "comment_id": node_id})
 
 pattern = re.compile(
     r"<summary>🤖\s*(?P<title>Prompt[^<]*)</summary>.*?```(?:\w+)?\n(?P<prompt>.*?)```",
@@ -271,8 +284,8 @@ pattern = re.compile(
 
 seen = set()
 prompts = []
-for body in sources:
-    for m in pattern.finditer(body):
+for src in sources:
+    for m in pattern.finditer(src["body"]):
         title = re.sub(r"\s+", " ", m.group("title").strip())
         prompt = m.group("prompt").strip()
         if not prompt:
@@ -284,7 +297,15 @@ for body in sources:
         if key in seen:
             continue
         seen.add(key)
-        prompts.append({"title": title, "prompt": prompt, "aggregate": aggregate})
+        cid = src["comment_id"]
+        thread_id = comment_to_thread.get(cid, "")
+        prompts.append({
+            "title": title,
+            "prompt": prompt,
+            "aggregate": aggregate,
+            "comment_id": cid,
+            "thread_id": thread_id,
+        })
 
 pathlib.Path(out_path).write_text(json.dumps(prompts, indent=2))
 PY
@@ -303,15 +324,24 @@ fi
 
 echo "Found $PROMPT_COUNT CodeRabbit prompt(s) for PR #$PR_NUMBER in $REPO"
 
-python3 - "$PROMPTS_JSON" "$TMP_DIR" <<'PY'
+# Write prompt files and metadata (filename → thread_id mapping).
+python3 - "$PROMPTS_JSON" "$TMP_DIR" "$META_JSON" <<'PY'
 import json, pathlib, re, sys
-prompts_path, out_dir = sys.argv[1:3]
+prompts_path, out_dir, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
 items = json.load(open(prompts_path))
 out = pathlib.Path(out_dir)
+meta = {}
 for i, item in enumerate(items, start=1):
     slug = re.sub(r'[^a-z0-9]+', '-', item['title'].lower()).strip('-') or f'prompt-{i}'
-    path = out / f'{i:03d}-{slug}.txt'
+    filename = f'{i:03d}-{slug}.txt'
+    path = out / filename
     path.write_text(item['prompt'])
+    meta[filename] = {
+        "title": item["title"],
+        "thread_id": item.get("thread_id", ""),
+        "comment_id": item.get("comment_id", ""),
+    }
+pathlib.Path(meta_path).write_text(json.dumps(meta, indent=2))
 PY
 
 PROMPT_FILES=()
@@ -341,6 +371,8 @@ for prompt_file in "${PROMPT_FILES[@]}"; do
     continue
   fi
 
+  PRE_CHANGE_SHA=$(git rev-parse HEAD)
+
   PROMPT_CONTENT=$(cat "$prompt_file")
   if [[ "$VERIFY" == "1" ]]; then
     FULL_PROMPT="$PROMPT_CONTENT
@@ -353,6 +385,28 @@ If changes are needed, implement them, do only minimal obvious sanity checks, av
   fi
 
   opencode run "$FULL_PROMPT"
+
+  POST_CHANGE_SHA=$(git rev-parse HEAD)
+
+  if [[ "$PRE_CHANGE_SHA" == "$POST_CHANGE_SHA" ]]; then
+    filename=$(basename "$prompt_file")
+    THREAD_ID=$(python3 - "$META_JSON" "$filename" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1]))
+entry = meta.get(sys.argv[2], {})
+print(entry.get("thread_id", ""))
+PY
+    )
+
+    if [[ -n "$THREAD_ID" ]]; then
+      echo "  (no changes — resolving review thread via API)"
+      gh api graphql \
+        -f query='mutation($threadId:ID!) { resolveReviewThread(input:{threadId:$threadId}) { thread { id } } }' \
+        -F threadId="$THREAD_ID" --jq '.data.resolveReviewThread.thread.id' >/dev/null 2>&1 || true
+    else
+      echo "  (no changes — no thread ID to resolve)"
+    fi
+  fi
 done
 
 if [[ "$DRY_RUN" == "1" ]]; then
