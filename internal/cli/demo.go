@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -281,14 +283,127 @@ func loadSpansFromIngest(cfg config.Config) ([]artifacts.EventSpan, error) {
 	}
 
 	if len(spans) == 0 {
-		spans = generateFallbackSpans()
+		return nil, fmt.Errorf("buildDemoSpans returned no spans and no error")
 	}
 
 	return spans, nil
 }
 
 func buildDemoSpans(f *os.File) ([]artifacts.EventSpan, error) {
-	return nil, nil
+	var events []artifacts.RawEvent
+
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var event artifacts.RawEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return nil, fmt.Errorf("parse event at line %d: %w", lineNum, err)
+		}
+
+		if event.EventID == "" {
+			return nil, fmt.Errorf("event at line %d missing event_id", lineNum)
+		}
+
+		events = append(events, event)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+
+	if len(events) == 0 {
+		return nil, fmt.Errorf("no events found in input")
+	}
+
+	var spans []artifacts.EventSpan
+	var currentEvents []artifacts.RawEvent
+	var currentRefs []string
+
+	for i, event := range events {
+		currentEvents = append(currentEvents, event)
+		currentRefs = append(currentRefs, event.RawRef)
+
+		isLastEvent := i == len(events)-1
+		hasBoundary := hasExplicitBoundary(event)
+
+		if !isLastEvent && !hasBoundary {
+			nextEvent := events[i+1]
+			quietPeriod := nextEvent.Timestamp.Sub(event.Timestamp)
+
+			if quietPeriod < 30*time.Second {
+				continue
+			}
+		}
+
+		reason := "eof"
+		if hasBoundary {
+			reason = "explicit"
+		} else if isLastEvent {
+			reason = "eof"
+		}
+
+		span := createDemoSpan(currentEvents, currentRefs, reason)
+		spans = append(spans, span)
+		currentEvents = nil
+		currentRefs = nil
+	}
+
+	return spans, nil
+}
+
+func hasExplicitBoundary(event artifacts.RawEvent) bool {
+	if event.Metadata == nil {
+		return false
+	}
+
+	if boundary, ok := event.Metadata["turn_boundary"]; ok {
+		if b, ok := boundary.(bool); ok && b {
+			return true
+		}
+		if b, ok := boundary.(string); ok && b == "true" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func createDemoSpan(events []artifacts.RawEvent, refs []string, reason string) artifacts.EventSpan {
+	if len(events) == 0 {
+		return artifacts.EventSpan{}
+	}
+
+	first := events[0]
+	last := events[len(events)-1]
+
+	eventIDs := make([]string, len(events))
+	for i, e := range events {
+		eventIDs[i] = e.EventID
+	}
+
+	spanType := "turn"
+	if len(events) > 1 {
+		spanType = "segment"
+	}
+
+	return artifacts.EventSpan{
+		SpanID:         "span_" + first.EventID,
+		SpanType:       spanType,
+		SourceID:       first.SourceID,
+		SessionID:      first.SessionID,
+		StartEventID:   first.EventID,
+		EndEventID:     last.EventID,
+		EventIDs:       eventIDs,
+		RawRefs:        refs,
+		BoundaryReason: reason,
+		CreatedAt:      time.Now(),
+	}
 }
 
 func generateFallbackSpans() []artifacts.EventSpan {
