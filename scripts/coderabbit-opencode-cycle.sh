@@ -39,6 +39,8 @@ infer_repo() {
   local remote url
   remote=$(git remote get-url origin)
   url=${remote%.git}
+  url=${url#ssh://git@github.com/}
+  url=${url#ssh://github.com/}
   url=${url#git@github.com:}
   url=${url#https://github.com/}
   printf '%s\n' "$url"
