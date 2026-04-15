@@ -99,8 +99,7 @@ func TestDemoAcceptancePath(t *testing.T) {
 	for _, candidate := range candidates {
 		result, err := policySvc.Evaluate(ctx, candidate)
 		if err != nil {
-			t.Logf("policy evaluate: %v", err)
-			continue
+			t.Fatalf("policy evaluate: %v", err)
 		}
 		if result.Status == artifacts.StatusApproved {
 			approved = append(approved, result)
@@ -111,8 +110,7 @@ func TestDemoAcceptancePath(t *testing.T) {
 	for _, a := range approved {
 		p, err := policySvc.PersistApproved(ctx, a)
 		if err != nil {
-			t.Logf("persist: %v", err)
-			continue
+			t.Fatalf("persist: %v", err)
 		}
 		persisted = append(persisted, p)
 	}
