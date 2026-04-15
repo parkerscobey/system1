@@ -167,8 +167,9 @@ func skipSQLiteFTSTest(t *testing.T) {
 			strings.Contains(err.Error(), "FTS5") ||
 			strings.Contains(err.Error(), "fts5") {
 			t.Skip("SQLite FTS5 support is not available")
+		} else {
+			t.Fatalf("Cannot create file store: %v", err)
 		}
-		t.Skipf("Cannot create file store: %v", err)
 	}
 	store.Close()
 	os.RemoveAll(tmpDir)
