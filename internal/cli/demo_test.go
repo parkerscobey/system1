@@ -67,7 +67,7 @@ func TestDemoAcceptancePath(t *testing.T) {
 	}
 
 	extractSvc := extract.NewService(logger, cfg)
-	spans := generateTestSpans()
+	spans := ingestSvc.GetSpans()
 
 	var candidates []artifacts.CandidateArtifact
 	for _, span := range spans {
