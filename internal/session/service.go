@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -78,6 +79,10 @@ func (s *Service) assembleAmbientContext(ctx context.Context) ([]artifacts.Persi
 		s.logger.InfoContext(ctx, "no artifacts found for ambient context")
 		return nil, nil
 	}
+
+	sort.Slice(allArtifacts, func(i, j int) bool {
+		return allArtifacts[i].WrittenAt.After(allArtifacts[j].WrittenAt)
+	})
 
 	const maxAmbientArtifacts = 20
 	var ambient []artifacts.PersistedArtifact
