@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -148,13 +149,27 @@ func TestDemoAcceptancePath(t *testing.T) {
 }
 
 func skipSQLiteFTSTest(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "testfts.db")
-	db, err := os.Create(dbPath)
-	if err != nil {
-		t.Skip("Cannot create temp SQLite database")
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "testfts.db")
+
+	cfg := config.Config{
+		StateDir:     tmpDir,
+		ArtifactsDir: filepath.Join(tmpDir, "artifacts"),
+		SQLitePath:   dbPath,
 	}
-	db.Close()
-	os.Remove(dbPath)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, err := file.NewStore(logger, cfg)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such module") ||
+			strings.Contains(err.Error(), "FTS5") ||
+			strings.Contains(err.Error(), "fts5") {
+			t.Skip("SQLite FTS5 support is not available")
+		}
+		t.Skipf("Cannot create file store: %v", err)
+	}
+	store.Close()
+	os.RemoveAll(tmpDir)
 }
 
 func generateTestSpans() []artifacts.EventSpan {
