@@ -180,7 +180,7 @@ cursor = None
 has_more = True
 
 while has_more:
-    cursor_var = f"\"{cursor}\"" if cursor else "null"
+    
     query = (
         'query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {'
         ' repository(owner:$owner, name:$repo) {'
