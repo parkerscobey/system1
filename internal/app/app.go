@@ -46,7 +46,7 @@ func New() (*App, error) {
 	introspectionSvc := introspect.NewService(logger, cfg, backend)
 	extractSvc := extract.NewService(logger, cfg)
 	policySvc := policy.NewService(logger, cfg, backend)
-	daemonRunner := daemon.NewRunner(logger, cfg)
+	daemonRunner := daemon.NewRunner(logger, cfg, sessionSvc, introspectionSvc)
 
 	health := obs.NewHealth(logger)
 	decisionLog := obs.NewDecisionLog(logger)
