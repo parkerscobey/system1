@@ -9,7 +9,9 @@ Usage:
 Options:
   --repo OWNER/REPO        GitHub repo (default: inferred from git remote)
   --branch BRANCH          Branch to push at the end (default: current branch)
+  --verify                 Ask opencode to run relevant verification before commit
   --include-aggregate      Also run the aggregate "Prompt for all review comments..." block
+  --include-resolved       Include prompts from resolved review threads too
   --no-push                Do not push after runs complete
   --dry-run                Extract prompts and print them without running opencode
   -h, --help               Show this help
@@ -18,12 +20,14 @@ What it does:
   1. Fetches CodeRabbit comments from the PR via gh api
   2. Extracts "Prompt for AI Agents" code blocks
   3. Runs opencode once per prompt, sequentially
-  4. Appends a commit instruction to each prompt
-  5. Pushes the current branch when done (unless --no-push)
+  4. Appends a default patch-and-commit instruction to each prompt
+  5. Pushes the branch when done (unless --no-push)
 
 Notes:
   - By default, aggregate "Prompt for all review comments with AI agents" blocks are skipped
     to avoid duplicating the individual prompt runs.
+  - By default, prompts from resolved review threads are skipped.
+  - By default, opencode is told to patch and commit without extra verification.
   - Assumes opencode is already configured for non-interactive use in this repo.
 EOF
 }
@@ -50,8 +54,10 @@ PR_NUMBER=""
 REPO=""
 BRANCH=""
 INCLUDE_AGGREGATE=0
+INCLUDE_RESOLVED=0
 PUSH_AT_END=1
 DRY_RUN=0
+VERIFY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,8 +79,16 @@ while [[ $# -gt 0 ]]; do
       BRANCH=$2
       shift 2
       ;;
+    --verify)
+      VERIFY=1
+      shift
+      ;;
     --include-aggregate)
       INCLUDE_AGGREGATE=1
+      shift
+      ;;
+    --include-resolved)
+      INCLUDE_RESOLVED=1
       shift
       ;;
     --no-push)
@@ -129,7 +143,7 @@ if [[ -z "$BRANCH" ]]; then
   exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+if ! git diff --quiet || ! git diff --cached --quiet || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
   echo "Working tree is not clean. Commit or stash changes first." >&2
   exit 1
 fi
@@ -143,16 +157,37 @@ trap cleanup EXIT
 ISSUE_JSON="$TMP_DIR/issues.json"
 REVIEW_JSON="$TMP_DIR/reviews.json"
 INLINE_JSON="$TMP_DIR/inline.json"
+THREADS_JSON="$TMP_DIR/threads.json"
 PROMPTS_JSON="$TMP_DIR/prompts.json"
+
+OWNER=${REPO%%/*}
+REPO_NAME=${REPO#*/}
 
 gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate > "$ISSUE_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" --paginate > "$REVIEW_JSON"
 gh api "repos/$REPO/pulls/$PR_NUMBER/comments" --paginate > "$INLINE_JSON"
+gh api graphql \
+  -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner, name:$repo) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { isResolved comments(first:100) { nodes { id } } } } } } }' \
+  -f owner="$OWNER" \
+  -f repo="$REPO_NAME" \
+  -F number="$PR_NUMBER" > "$THREADS_JSON"
 
-python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" <<'PY'
+python3 - "$ISSUE_JSON" "$REVIEW_JSON" "$INLINE_JSON" "$THREADS_JSON" "$PROMPTS_JSON" "$INCLUDE_AGGREGATE" "$INCLUDE_RESOLVED" <<'PY'
 import json, pathlib, re, sys
-issue_path, review_path, inline_path, out_path, include_aggregate = sys.argv[1:6]
+issue_path, review_path, inline_path, threads_path, out_path, include_aggregate, include_resolved = sys.argv[1:8]
 include_aggregate = include_aggregate == "1"
+include_resolved = include_resolved == "1"
+
+resolved_comment_ids = set()
+threads_data = json.loads(pathlib.Path(threads_path).read_text())
+thread_nodes = (((threads_data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}).get("reviewThreads", {}).get("nodes", [])
+for thread in thread_nodes:
+    if not thread.get("isResolved"):
+        continue
+    for comment in ((thread.get("comments") or {}).get("nodes") or []):
+        comment_id = comment.get("id")
+        if comment_id:
+            resolved_comment_ids.add(comment_id)
 
 sources = []
 for path in [issue_path, review_path, inline_path]:
@@ -168,7 +203,10 @@ for path in [issue_path, review_path, inline_path]:
     for item in data:
         user = ((item.get("user") or {}).get("login") or "")
         body = item.get("body") or ""
+        node_id = item.get("node_id") or item.get("id") or ""
         if user not in {"coderabbitai", "coderabbitai[bot]"} or not body:
+            continue
+        if not include_resolved and node_id in resolved_comment_ids:
             continue
         sources.append(body)
 
@@ -205,8 +243,8 @@ PY
 )
 
 if [[ "$PROMPT_COUNT" == "0" ]]; then
-  echo "No CodeRabbit prompts found for PR #$PR_NUMBER in $REPO" >&2
-  exit 1
+  echo "No matching CodeRabbit prompts found for PR #$PR_NUMBER in $REPO"
+  exit 0
 fi
 
 echo "Found $PROMPT_COUNT CodeRabbit prompt(s) for PR #$PR_NUMBER in $REPO"
@@ -243,12 +281,17 @@ for prompt_file in "${PROMPT_FILES[@]}"; do
   require_bin opencode
 
   PROMPT_CONTENT=$(cat "$prompt_file")
-  FULL_PROMPT="$PROMPT_CONTENT
+  if [[ "$VERIFY" == "1" ]]; then
+    FULL_PROMPT="$PROMPT_CONTENT
 
 If changes are needed, implement them, run relevant tests, and commit these changes when you're done. Do not push."
+  else
+    FULL_PROMPT="$PROMPT_CONTENT
+
+If changes are needed, implement them, do only minimal obvious sanity checks, avoid extra environment probing or exploratory verification, and commit these changes when you're done. Do not push."
+  fi
 
   opencode run "$FULL_PROMPT"
-
 done
 
 if [[ "$DRY_RUN" == "1" ]]; then

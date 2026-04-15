@@ -69,8 +69,9 @@ make test
 For PRs with CodeRabbit feedback, this repo includes a helper script that:
 
 - fetches CodeRabbit "Prompt for AI Agents" blocks from a PR
+- skips resolved review-thread comments by default
 - runs one non-interactive `opencode run` per prompt
-- appends a commit instruction to each run
+- defaults to patch-and-commit mode without extra verification
 - pushes the branch once at the end
 
 Example:
@@ -78,9 +79,11 @@ Example:
 ```bash
 ./scripts/coderabbit-opencode-cycle.sh 13 --repo XferOps/system1 --dry-run
 ./scripts/coderabbit-opencode-cycle.sh 13 --repo XferOps/system1
+./scripts/coderabbit-opencode-cycle.sh 13 --repo XferOps/system1 --verify
 ```
 
 By default, the script skips the aggregate "Prompt for all review comments..." block to avoid duplicating the individual prompt runs.
+Use `--include-resolved` if you intentionally want to re-run prompts from resolved review threads.
 
 ## MVP principles
 
