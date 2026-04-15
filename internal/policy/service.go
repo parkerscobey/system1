@@ -2,9 +2,11 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -31,10 +33,11 @@ const (
 )
 
 type Service struct {
-	logger       *slog.Logger
-	cfg          config.Config
-	backend      *file.Store
-	deferred     map[string]artifacts.CandidateArtifact
+	logger  *slog.Logger
+	cfg    config.Config
+	backend *file.Store
+	mu      sync.RWMutex
+	deferred    map[string]artifacts.CandidateArtifact
 	enabledTypes map[string]bool
 }
 
@@ -99,16 +102,32 @@ func (s *Service) Evaluate(ctx context.Context, candidate artifacts.CandidateArt
 }
 
 func (s *Service) ResolveDeferred(ctx context.Context) ([]artifacts.CandidateArtifact, error) {
-	s.logger.InfoContext(ctx, "resolving deferred candidates", slog.Int("count", len(s.deferred)))
+	s.mu.Lock()
+	count := len(s.deferred)
+	s.mu.Unlock()
+
+	s.logger.InfoContext(ctx, "resolving deferred candidates", slog.Int("count", count))
+
+	s.mu.RLock()
+	deferred := s.deferred
+	s.mu.RUnlock()
 
 	var resolved []artifacts.CandidateArtifact
 
-	for _, candidate := range s.deferred {
+	for _, candidate := range deferred {
 		existing, err := s.backend.GetByCandidate(ctx, candidate.CandidateID)
 		if err == nil {
 			s.logger.DebugContext(ctx, "candidate already persisted",
 				slog.String("candidate_id", candidate.CandidateID),
 				slog.String("persisted_id", existing.PersistedID))
+			continue
+		}
+
+		if !errors.Is(err, file.ErrNotFound) {
+			s.logger.ErrorContext(ctx, "failed to check candidate persistence",
+				slog.String("candidate_id", candidate.CandidateID),
+				"error", err)
+			resolved = append(resolved, s.reject(candidate, "persistence check failed: "+err.Error()))
 			continue
 		}
 
@@ -139,13 +158,23 @@ func (s *Service) ResolveDeferred(ctx context.Context) ([]artifacts.CandidateArt
 		}
 	}
 
+	s.mu.Lock()
 	s.deferred = make(map[string]artifacts.CandidateArtifact)
+	s.mu.Unlock()
+
 	s.logger.InfoContext(ctx, "deferred resolution complete", slog.Int("resolved", len(resolved)))
 
 	return resolved, nil
 }
 
 func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.CandidateArtifact) (artifacts.PersistedArtifact, error) {
+	if candidate.Status != artifacts.StatusApproved {
+		s.logger.ErrorContext(ctx, "cannot persist candidate that is not approved",
+			slog.String("candidate_id", candidate.CandidateID),
+			slog.String("status", string(candidate.Status)))
+		return artifacts.PersistedArtifact{}, fmt.Errorf("candidate status %s not approved for persistence", candidate.Status)
+	}
+
 	persisted := artifacts.PersistedArtifact{
 		PersistedID:  uuid.New().String(),
 		ArtifactType: candidate.ArtifactType,
@@ -176,6 +205,8 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 }
 
 func (s *Service) GetDeferredCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.deferred)
 }
 
@@ -270,19 +301,30 @@ func (s *Service) makeDecision(ctx context.Context, candidate artifacts.Candidat
 func (s *Service) approve(candidate artifacts.CandidateArtifact, reason string) artifacts.CandidateArtifact {
 	candidate.Status = artifacts.StatusApproved
 	candidate.ApprovalReason = reason
+	candidate.DeferReason = ""
+	s.mu.Lock()
+	delete(s.deferred, candidate.CandidateID)
+	s.mu.Unlock()
 	return candidate
 }
 
 func (s *Service) reject(candidate artifacts.CandidateArtifact, reason string) artifacts.CandidateArtifact {
 	candidate.Status = artifacts.StatusRejected
 	candidate.ApprovalReason = reason
+	candidate.DeferReason = ""
+	s.mu.Lock()
+	delete(s.deferred, candidate.CandidateID)
+	s.mu.Unlock()
 	return candidate
 }
 
 func (s *Service) deferCandidate(candidate artifacts.CandidateArtifact, reason string) artifacts.CandidateArtifact {
 	candidate.Status = artifacts.StatusDeferred
+	candidate.ApprovalReason = ""
 	candidate.DeferReason = reason
+	s.mu.Lock()
 	s.deferred[candidate.CandidateID] = candidate
+	s.mu.Unlock()
 	return candidate
 }
 
