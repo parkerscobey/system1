@@ -49,27 +49,54 @@ const (
 )
 
 type CandidateArtifact struct {
-	CandidateID     string          `json:"candidate_id"`
-	ArtifactType    string          `json:"artifact_type"`
-	ProposedScope   string          `json:"proposed_scope"`
-	Title           string          `json:"title"`
-	Body            string          `json:"body"`
-	Confidence      string          `json:"confidence"`
-	Provenance      Provenance      `json:"provenance"`
-	Status          CandidateStatus `json:"status"`
-	ApprovalReason  string          `json:"approval_reason,omitempty"`
-	RejectionReason string          `json:"rejection_reason,omitempty"`
-	DeferReason     string          `json:"defer_reason,omitempty"`
-	BackendTarget   string          `json:"backend_target,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
+	CandidateID    string          `json:"candidate_id"`
+	ArtifactType   string          `json:"artifact_type"`
+	ProposedScope  string          `json:"proposed_scope"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body"`
+	Confidence     string          `json:"confidence"`
+	Provenance     Provenance      `json:"provenance"`
+	Status         CandidateStatus `json:"status"`
+	ApprovalReason string          `json:"approval_reason,omitempty"`
+	DeferReason    string          `json:"defer_reason,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
+
+func (c CandidateArtifact) GetArtifactType() string   { return c.ArtifactType }
+func (c CandidateArtifact) GetScope() string          { return c.ProposedScope }
+func (c CandidateArtifact) GetTitle() string          { return c.Title }
+func (c CandidateArtifact) GetBody() string           { return c.Body }
+func (c CandidateArtifact) GetConfidence() string     { return c.Confidence }
+func (c CandidateArtifact) GetProvenance() Provenance { return c.Provenance }
 
 type PersistedArtifact struct {
 	PersistedID     string         `json:"persisted_id"`
+	ArtifactType    string         `json:"artifact_type"`
+	Scope           string         `json:"scope"`
+	Title           string         `json:"title"`
+	Body            string         `json:"body"`
+	Confidence      string         `json:"confidence"`
+	Provenance      Provenance     `json:"provenance"`
+	CandidateID     string         `json:"candidate_id"`
 	BackendType     string         `json:"backend_type"`
 	BackendRef      string         `json:"backend_ref"`
-	CandidateID     string         `json:"candidate_id"`
 	WrittenAt       time.Time      `json:"written_at"`
 	WriteStatus     string         `json:"write_status"`
 	BackendMetadata map[string]any `json:"backend_metadata,omitempty"`
+}
+
+type ArtifactScope string
+
+const (
+	ScopeProject ArtifactScope = "PROJECT"
+	ScopeAgent   ArtifactScope = "AGENT"
+	ScopeOrg     ArtifactScope = "ORG"
+)
+
+func (s ArtifactScope) IsValid() bool {
+	switch s {
+	case ScopeProject, ScopeAgent, ScopeOrg:
+		return true
+	}
+	return false
 }
