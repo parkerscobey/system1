@@ -21,6 +21,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(newSessionCmd(ctx))
 	cmd.AddCommand(newIntrospectCmd(ctx))
 	cmd.AddCommand(newObserveCmd(ctx))
+	cmd.AddCommand(newDemoCmd(ctx))
 
 	return cmd
 }

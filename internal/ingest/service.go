@@ -40,6 +40,7 @@ type Service struct {
 	cfg        config.Config
 	cursorPath string
 	quietConf  QuietPeriodConfig
+	lastSpans  []artifacts.EventSpan
 }
 
 type IngestStats struct {
@@ -69,6 +70,7 @@ func NewService(logger *slog.Logger, cfg config.Config) *Service {
 
 func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	stats := &IngestStats{}
+	s.lastSpans = nil
 
 	logPath := s.cfg.SessionLogPath
 	if _, err := os.Stat(logPath); errors.Is(err, os.ErrNotExist) {
@@ -146,6 +148,7 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 		return nil, fmt.Errorf("build spans: %w", err)
 	}
 
+	s.lastSpans = spans
 	stats.SpansBuilt = len(spans)
 
 	lastOffset, err := currentReadOffset(file, reader)
@@ -344,6 +347,10 @@ func (s *Service) saveCursor(ctx context.Context, cursor *CursorState) error {
 
 func (s *Service) GetStatus(ctx context.Context) (*CursorState, error) {
 	return s.loadCursor(ctx)
+}
+
+func (s *Service) GetSpans() []artifacts.EventSpan {
+	return s.lastSpans
 }
 
 func currentReadOffset(file *os.File, reader *bufio.Reader) (int64, error) {
