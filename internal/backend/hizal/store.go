@@ -27,6 +27,9 @@ type Store struct {
 }
 
 func NewStore(logger *slog.Logger, projectID string, enabledTypes []string) *Store {
+	if strings.ContainsAny(projectID, `/\\`) || projectID == "." || projectID == ".." {
+		projectID = "default"
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
