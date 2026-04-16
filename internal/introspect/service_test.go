@@ -51,6 +51,71 @@ func TestQueryUsesPreloadedAmbientBeforeBackend(t *testing.T) {
 	}
 }
 
+func TestQueryMatchesStemmedAmbientTerms(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+	cfg := config.Config{
+		StateDir:     tmpDir,
+		ArtifactsDir: filepath.Join(tmpDir, "artifacts"),
+		SQLitePath:   filepath.Join(tmpDir, "test.db"),
+		EnabledTypes: []string{"MEMORY"},
+	}
+
+	artifact := persistedArtifact("artifact-prefer", "Preference memory", "I prefer clear APIs and documented endpoints.", time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC))
+	writeAmbientSnapshot(t, cfg.StateDir, []artifacts.PersistedArtifact{artifact})
+
+	svc := NewService(logger, cfg, nil)
+	result, err := svc.Query(ctx, "what did I learn about preferences", false)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	if !strings.Contains(result.Answer, artifact.Title) {
+		t.Fatalf("expected stemmed query to match ambient artifact, got %q", result.Answer)
+	}
+}
+
+func TestCalibrationFallsBackToAmbientContext(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+	cfg := config.Config{
+		StateDir:     tmpDir,
+		ArtifactsDir: filepath.Join(tmpDir, "artifacts"),
+		SQLitePath:   filepath.Join(tmpDir, "test.db"),
+		EnabledTypes: []string{"MEMORY"},
+	}
+
+	artifact := persistedArtifact("artifact-gap", "Codebase notes", "The codebase uses Go, cobra, and sqlite3.", time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC))
+	writeAmbientSnapshot(t, cfg.StateDir, []artifacts.PersistedArtifact{artifact})
+
+	svc := NewService(logger, cfg, nil)
+	result, err := svc.Query(ctx, "what am I forgetting", false)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	if strings.Contains(result.Answer, "Starting fresh") {
+		t.Fatalf("expected calibration to use ambient context, got %q", result.Answer)
+	}
+	if !strings.Contains(result.Answer, "Potential gaps identified") {
+		t.Fatalf("expected calibration response, got %q", result.Answer)
+	}
+}
+
+func TestBuildFTSQueryDropsStopwordsAndAddsPrefixMatching(t *testing.T) {
+	got := buildFTSQuery("what did I learn about preferences")
+	if strings.Contains(got, "what*") || strings.Contains(got, "about*") {
+		t.Fatalf("expected stopwords to be removed, got %q", got)
+	}
+	for _, expected := range []string{"learn*", "preferences*", "preference*", "prefer*"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected FTS query to include %q, got %q", expected, got)
+		}
+	}
+}
+
 func TestQueryDebugModeIncludesProvenance(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

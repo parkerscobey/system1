@@ -59,6 +59,13 @@ func (s *Service) Query(ctx context.Context, query string, debug bool) (Result, 
 	allResults = append(allResults, ambientResults...)
 	allResults = append(allResults, backendResults...)
 
+	if isCalibration && len(allResults) == 0 {
+		allResults, err = s.loadCalibrationContext(ctx)
+		if err != nil {
+			s.logger.WarnContext(ctx, "calibration context load failed", "error", err)
+		}
+	}
+
 	if len(allResults) == 0 {
 		return Result{
 			Answer:        "No relevant context found. Starting fresh.",
@@ -126,12 +133,21 @@ func (s *Service) queryAmbientContext(ctx context.Context, query string) ([]arti
 }
 
 func (s *Service) queryBackend(ctx context.Context, query string) ([]artifactslib.PersistedArtifact, error) {
-	results, err := s.backend.Search(ctx, query, 15)
+	if s.backend == nil {
+		return nil, nil
+	}
+
+	ftsQuery := buildFTSQuery(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
+
+	results, err := s.backend.Search(ctx, ftsQuery, 15)
 	if err != nil {
 		return nil, err
 	}
 
-	s.logger.DebugContext(ctx, "backend query completed", slog.Int("results", len(results)))
+	s.logger.DebugContext(ctx, "backend query completed", slog.Int("results", len(results)), slog.String("fts_query", ftsQuery))
 
 	return results, nil
 }
@@ -290,10 +306,14 @@ func sortArtifactsByRecency(artifacts []artifactslib.PersistedArtifact) {
 
 func normalizedTerms(text string) []string {
 	words := strings.Fields(text)
+	seen := make(map[string]bool)
 	terms := make([]string, 0, len(words))
 	for _, word := range words {
-		term := normalizeTopicTerm(word)
-		if term != "" {
+		for _, term := range expandNormalizedTerms(word) {
+			if term == "" || seen[term] {
+				continue
+			}
+			seen[term] = true
 			terms = append(terms, term)
 		}
 	}
@@ -310,13 +330,14 @@ func matchesArtifact(queryTerms []string, artifact artifactslib.PersistedArtifac
 		artifactTerms[word] = true
 	}
 
+	matches := 0
 	for _, term := range queryTerms {
 		if artifactTerms[term] {
-			return true
+			matches++
 		}
 	}
 
-	return false
+	return matches > 0
 }
 
 func collectDebugEvidence(artifacts []artifactslib.PersistedArtifact) ([]string, []string) {
@@ -330,7 +351,78 @@ func collectDebugEvidence(artifacts []artifactslib.PersistedArtifact) ([]string,
 }
 
 func normalizeTopicTerm(word string) string {
-	return strings.Trim(strings.ToLower(word), ".,!?:;()[]{}\"'`")
+	term := strings.Trim(strings.ToLower(word), ".,!?:;()[]{}\"'`")
+	term = strings.Trim(term, "-_/")
+	return term
+}
+
+func expandNormalizedTerms(word string) []string {
+	term := normalizeTopicTerm(word)
+	if term == "" || topicStopwords[term] {
+		return nil
+	}
+
+	seen := map[string]bool{term: true}
+	variants := []string{term}
+	current := term
+	for i := 0; i < 3; i++ {
+		next := stemTerm(current)
+		if next == "" || next == current || seen[next] || topicStopwords[next] {
+			break
+		}
+		seen[next] = true
+		variants = append(variants, next)
+		current = next
+	}
+	return variants
+}
+
+func stemTerm(term string) string {
+	switch {
+	case len(term) > 5 && strings.HasSuffix(term, "ences"):
+		return strings.TrimSuffix(term, "ences") + "ence"
+	case len(term) > 4 && strings.HasSuffix(term, "ence"):
+		return strings.TrimSuffix(term, "ence")
+	case len(term) > 5 && strings.HasSuffix(term, "ings"):
+		return strings.TrimSuffix(term, "ings")
+	case len(term) > 4 && strings.HasSuffix(term, "ing"):
+		return strings.TrimSuffix(term, "ing")
+	case len(term) > 4 && strings.HasSuffix(term, "ied"):
+		return strings.TrimSuffix(term, "ied") + "y"
+	case len(term) > 3 && strings.HasSuffix(term, "ed"):
+		return strings.TrimSuffix(term, "ed")
+	case len(term) > 4 && strings.HasSuffix(term, "es"):
+		return strings.TrimSuffix(term, "es")
+	case len(term) > 3 && strings.HasSuffix(term, "s"):
+		return strings.TrimSuffix(term, "s")
+	default:
+		return term
+	}
+}
+
+func buildFTSQuery(query string) string {
+	terms := normalizedTerms(query)
+	if len(terms) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(terms))
+	for _, term := range terms {
+		parts = append(parts, term+"*")
+	}
+	return strings.Join(parts, " OR ")
+}
+
+func (s *Service) loadCalibrationContext(ctx context.Context) ([]artifactslib.PersistedArtifact, error) {
+	ambient, err := session.LoadAmbientSnapshot(s.cfg.StateDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(ambient) > 0 {
+		sortArtifactsByRecency(ambient)
+		return ambient, nil
+	}
+	return nil, nil
 }
 
 func shouldIncludeTopic(word string, minLength int) bool {
@@ -341,19 +433,27 @@ func shouldIncludeTopic(word string, minLength int) bool {
 }
 
 var topicStopwords = map[string]bool{
-	"about": true,
-	"after": true,
-	"also":  true,
-	"and":   true,
-	"from":  true,
-	"have":  true,
-	"just":  true,
-	"that":  true,
-	"them":  true,
-	"they":  true,
-	"this":  true,
-	"what":  true,
-	"when":  true,
-	"with":  true,
-	"your":  true,
+	"about":  true,
+	"after":  true,
+	"also":   true,
+	"am":     true,
+	"and":    true,
+	"did":    true,
+	"do":     true,
+	"else":   true,
+	"from":   true,
+	"have":   true,
+	"i":      true,
+	"just":   true,
+	"know":   true,
+	"might":  true,
+	"should": true,
+	"that":   true,
+	"them":   true,
+	"they":   true,
+	"this":   true,
+	"what":   true,
+	"when":   true,
+	"with":   true,
+	"your":   true,
 }
