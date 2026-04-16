@@ -87,6 +87,69 @@ func TestStore_Save_MissingID(t *testing.T) {
     }
 }
 
+func TestStore_FindByType(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-findbytype", []string{"MEMORY", "KNOWLEDGE"})
+	ctx := context.Background()
+
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "art-find-1",
+		ArtifactType: "MEMORY",
+		Scope:        string(artifacts.ScopeProject),
+		Title:        "Findable",
+		Body:         "body",
+		Confidence:   artifacts.ConfidenceHigh,
+		CandidateID:  "cand-find",
+		BackendType:  "hizal",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+	if err := store.Save(ctx, a); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	results, err := store.FindByType(ctx, "MEMORY")
+	if err != nil {
+		t.Fatalf("FindByType failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("FindByType returned %d results, want 1", len(results))
+	}
+	if results[0].PersistedID != "art-find-1" {
+		t.Errorf("FindByType returned wrong artifact: %s", results[0].PersistedID)
+	}
+}
+
+func TestStore_Search(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-search", []string{"MEMORY"})
+	ctx := context.Background()
+
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "art-search-1",
+		ArtifactType: "MEMORY",
+		Scope:        string(artifacts.ScopeProject),
+		Title:        "Important decision about caching",
+		Body:         "We decided to use Redis for session caching.",
+		Confidence:   artifacts.ConfidenceHigh,
+		CandidateID:  "cand-search",
+		BackendType:  "hizal",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+	if err := store.Save(ctx, a); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	results, err := store.Search(ctx, "caching", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search returned %d results, want 1", len(results))
+	}
+}
+
 func TestStore_MappingFunctions(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project", []string{"MEMORY", "KNOWLEDGE"})
