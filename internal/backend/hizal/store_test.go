@@ -2,9 +2,14 @@ package hizal
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/backend"
 )
 
@@ -33,6 +38,170 @@ func TestStore_TypeRegistry(t *testing.T) {
 
 	if len(types) == 0 {
 		t.Error("TypeRegistry returned empty types")
+	}
+}
+
+func TestStore_SaveAndGet_Success(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-sg", []string{"MEMORY", "KNOWLEDGE"})
+	store.basePath = t.TempDir()
+
+	ctx := context.Background()
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "art1",
+		ArtifactType: "MEMORY",
+		Scope:        string(artifacts.ScopeProject),
+		Title:        "Test artifact",
+		Body:         "body",
+		Confidence:   artifacts.ConfidenceHigh,
+		CandidateID:  "cand1",
+		BackendType:  "hizal",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+
+	if err := store.Save(ctx, a); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := store.Get(ctx, a.PersistedID)
+	if err != nil {
+		t.Fatalf("Get after Save failed: %v", err)
+	}
+	if got.PersistedID != a.PersistedID || got.ArtifactType != a.ArtifactType {
+		t.Fatalf("unexpected retrieved artifact: %+v", got)
+	}
+	if got.BackendRef == "" {
+		t.Error("expected BackendRef to be populated")
+	}
+	if got.BackendMetadata == nil || got.BackendMetadata["store"] != "file" {
+		t.Error("expected BackendMetadata to contain store=file")
+	}
+}
+
+func TestStore_Save_MissingID(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-mid", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "",
+		ArtifactType: "MEMORY",
+		Title:        "No ID",
+		Body:         "body",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+	if err := store.Save(ctx, a); err == nil {
+		t.Fatalf("expected error when persisting without ID, got nil")
+	}
+}
+
+func TestStore_FindByType(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-findbytype", []string{"MEMORY", "KNOWLEDGE"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "art-find-1",
+		ArtifactType: "MEMORY",
+		Scope:        string(artifacts.ScopeProject),
+		Title:        "Findable",
+		Body:         "body",
+		Confidence:   artifacts.ConfidenceHigh,
+		CandidateID:  "cand-find",
+		BackendType:  "hizal",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+	if err := store.Save(ctx, a); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	results, err := store.FindByType(ctx, "MEMORY")
+	if err != nil {
+		t.Fatalf("FindByType failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("FindByType returned %d results, want 1", len(results))
+	}
+	if results[0].PersistedID != "art-find-1" {
+		t.Errorf("FindByType returned wrong artifact: %s", results[0].PersistedID)
+	}
+}
+
+func TestStore_Search(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-search", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	a := artifacts.PersistedArtifact{
+		PersistedID:  "art-search-1",
+		ArtifactType: "MEMORY",
+		Scope:        string(artifacts.ScopeProject),
+		Title:        "Important decision about caching",
+		Body:         "We decided to use Redis for session caching.",
+		Confidence:   artifacts.ConfidenceHigh,
+		CandidateID:  "cand-search",
+		BackendType:  "hizal",
+		WrittenAt:    time.Now(),
+		WriteStatus:  "written",
+	}
+	if err := store.Save(ctx, a); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	results, err := store.Search(ctx, "caching", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search returned %d results, want 1", len(results))
+	}
+}
+
+func TestStore_Search_CorruptChunkReturnsError(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-search-corrupt", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	dir := filepath.Join(store.basePath, "memory")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := store.Search(ctx, "anything", 10)
+	if err == nil {
+		t.Fatal("expected Search to fail on corrupt chunk")
+	}
+}
+
+func TestStore_Get_CorruptChunkReturnsError(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-get-corrupt", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	dir := filepath.Join(store.basePath, "memory")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "art1.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := store.Get(ctx, "art1")
+	if err == nil {
+		t.Fatal("expected Get to fail on corrupt chunk")
+	}
+	if errors.Is(err, backend.ErrNotFound) {
+		t.Fatalf("expected corrupt chunk error, got ErrNotFound: %v", err)
 	}
 }
 
