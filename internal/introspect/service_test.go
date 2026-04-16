@@ -76,6 +76,34 @@ func TestQueryMatchesStemmedAmbientTerms(t *testing.T) {
 	}
 }
 
+func TestBroadRecallFallsBackToAmbientContext(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+	cfg := config.Config{
+		StateDir:     tmpDir,
+		ArtifactsDir: filepath.Join(tmpDir, "artifacts"),
+		SQLitePath:   filepath.Join(tmpDir, "test.db"),
+		EnabledTypes: []string{"MEMORY"},
+	}
+
+	artifact := persistedArtifact("artifact-broad", "Preference memory", "I prefer clear APIs and documented endpoints.", time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC))
+	writeAmbientSnapshot(t, cfg.StateDir, []artifacts.PersistedArtifact{artifact})
+
+	svc := NewService(logger, cfg, nil)
+	result, err := svc.Query(ctx, "what do I know", false)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	if strings.Contains(result.Answer, "Starting fresh") {
+		t.Fatalf("expected broad recall to use ambient context, got %q", result.Answer)
+	}
+	if !strings.Contains(result.Answer, artifact.Title) {
+		t.Fatalf("expected broad recall answer to reference ambient artifact, got %q", result.Answer)
+	}
+}
+
 func TestCalibrationFallsBackToAmbientContext(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

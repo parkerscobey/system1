@@ -40,6 +40,7 @@ func (s *Service) Query(ctx context.Context, query string, debug bool) (Result, 
 	}
 
 	isCalibration := isCalibrationQuery(query)
+	isBroadRecall := isBroadRecallQuery(query)
 
 	ambientResults, err := s.queryAmbientContext(ctx, query)
 	if err != nil {
@@ -63,6 +64,13 @@ func (s *Service) Query(ctx context.Context, query string, debug bool) (Result, 
 		allResults, err = s.loadCalibrationContext(ctx)
 		if err != nil {
 			s.logger.WarnContext(ctx, "calibration context load failed", "error", err)
+		}
+	}
+
+	if isBroadRecall && len(allResults) == 0 {
+		allResults, err = s.loadBroadRecallContext(ctx)
+		if err != nil {
+			s.logger.WarnContext(ctx, "broad recall context load failed", "error", err)
 		}
 	}
 
@@ -92,6 +100,23 @@ func isCalibrationQuery(query string) bool {
 		"missing context",
 	}
 	for _, phrase := range calibrationPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBroadRecallQuery(query string) bool {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	broadRecallPhrases := []string{
+		"what do i know",
+		"what do i know?",
+		"what do i know about",
+		"what do i remember",
+		"what do i have context on",
+	}
+	for _, phrase := range broadRecallPhrases {
 		if strings.Contains(lower, phrase) {
 			return true
 		}
@@ -414,6 +439,14 @@ func buildFTSQuery(query string) string {
 }
 
 func (s *Service) loadCalibrationContext(ctx context.Context) ([]artifactslib.PersistedArtifact, error) {
+	return s.loadAmbientSnapshot()
+}
+
+func (s *Service) loadBroadRecallContext(ctx context.Context) ([]artifactslib.PersistedArtifact, error) {
+	return s.loadAmbientSnapshot()
+}
+
+func (s *Service) loadAmbientSnapshot() ([]artifactslib.PersistedArtifact, error) {
 	ambient, err := session.LoadAmbientSnapshot(s.cfg.StateDir)
 	if err != nil {
 		return nil, err
