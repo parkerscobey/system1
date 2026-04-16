@@ -306,15 +306,15 @@ func buildDemoSpans(f *os.File) ([]artifacts.EventSpan, error) {
 	for {
 		offsetBeforeRead := lineStartOffset
 		line, err := reader.ReadString('\n')
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, fmt.Errorf("read line: %w", err)
 		}
 
 		line = strings.TrimSpace(line)
 		if line == "" {
+			if err == io.EOF {
+				break
+			}
 			lineStartOffset, _ = f.Seek(0, io.SeekCurrent)
 			lineStartOffset -= int64(reader.Buffered())
 			continue
@@ -331,6 +331,10 @@ func buildDemoSpans(f *os.File) ([]artifacts.EventSpan, error) {
 
 		event.RawRef = fmt.Sprintf("%s:%d", filePath, offsetBeforeRead)
 		events = append(events, event)
+
+		if err == io.EOF {
+			break
+		}
 
 		lineStartOffset, _ = f.Seek(0, io.SeekCurrent)
 		lineStartOffset -= int64(reader.Buffered())
