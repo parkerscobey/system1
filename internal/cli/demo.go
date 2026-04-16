@@ -85,9 +85,8 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 			if err := createDemoSessionLog(stateDir); err != nil {
 				return fmt.Errorf("create demo fixtures: %w", err)
 			}
-		} else {
-			fixtureLog = fallbackLog
 		}
+		fixtureLog = fallbackLog
 	}
 
 	cfg := config.Config{
