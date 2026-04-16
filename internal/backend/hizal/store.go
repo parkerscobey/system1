@@ -59,10 +59,8 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 		return fmt.Errorf("marshal chunk data: %w", err)
 	}
 
-	s.logger.InfoContext(ctx, "hizal save not implemented - using file backend for persistence",
+	s.logger.WarnContext(ctx, "hizal persistence not implemented; data not saved",
 		"persisted_id", a.PersistedID, "chunk_type", chunkType, "content_len", len(content))
-
-	_ = content
 
 	return nil
 }
