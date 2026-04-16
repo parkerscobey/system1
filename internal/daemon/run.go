@@ -9,15 +9,25 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/XferOps/system1/internal/config"
+	"github.com/XferOps/system1/internal/introspect"
+	"github.com/XferOps/system1/internal/mcp"
+	"github.com/XferOps/system1/internal/session"
 )
 
 type Runner struct {
-	logger *slog.Logger
-	cfg    config.Config
+	logger         *slog.Logger
+	cfg            config.Config
+	sessionService *session.Service
+	introspection  *introspect.Service
 }
 
-func NewRunner(logger *slog.Logger, cfg config.Config) *Runner {
-	return &Runner{logger: logger, cfg: cfg}
+func NewRunner(logger *slog.Logger, cfg config.Config, sessionService *session.Service, introspection *introspect.Service) *Runner {
+	return &Runner{
+		logger:         logger,
+		cfg:            cfg,
+		sessionService: sessionService,
+		introspection:  introspection,
+	}
 }
 
 func (r *Runner) Run(ctx context.Context) error {
@@ -26,7 +36,13 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	r.logger.InfoContext(ctx, "system1 daemon starting", slog.String("state_dir", r.cfg.StateDir))
 
+	mcpServer := mcp.New(r.logger, r.sessionService, r.introspection)
+
 	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return mcpServer.Start(gctx)
+	})
+
 	g.Go(func() error {
 		<-gctx.Done()
 		return nil
