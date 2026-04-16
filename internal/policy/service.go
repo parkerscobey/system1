@@ -254,6 +254,12 @@ func (s *Service) validatePolicy(ctx context.Context, candidate artifacts.Candid
 }
 
 func (s *Service) checkDedup(ctx context.Context, candidate artifacts.CandidateArtifact) (bool, artifacts.PersistedArtifact, error) {
+	if s.backend == nil {
+		s.logger.DebugContext(ctx, "skipping dedup, no backend configured",
+			slog.String("candidate_id", candidate.CandidateID))
+		return false, artifacts.PersistedArtifact{}, nil
+	}
+
 	exactMatches, err := s.backend.FindByType(ctx, candidate.ArtifactType)
 	if err != nil {
 		return false, artifacts.PersistedArtifact{}, err
