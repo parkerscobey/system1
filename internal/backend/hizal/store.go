@@ -12,10 +12,7 @@ import (
 	"github.com/XferOps/system1/internal/backend"
 )
 
-var (
-	ErrNotImplemented = errors.New("not implemented in hizal backend")
-	ErrNotFound       = errors.New("artifact not found")
-)
+var ErrNotImplemented = errors.New("not implemented in hizal backend")
 
 type Store struct {
 	logger        *slog.Logger
@@ -72,12 +69,12 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 
 func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact, error) {
 	s.logger.DebugContext(ctx, "hizal get not implemented", "id", id)
-	return artifacts.PersistedArtifact{}, ErrNotFound
+	return artifacts.PersistedArtifact{}, backend.ErrNotFound
 }
 
 func (s *Store) GetByCandidate(ctx context.Context, candidateID string) (artifacts.PersistedArtifact, error) {
 	s.logger.DebugContext(ctx, "hizal get by candidate not implemented", "candidate_id", candidateID)
-	return artifacts.PersistedArtifact{}, ErrNotFound
+	return artifacts.PersistedArtifact{}, backend.ErrNotFound
 }
 
 func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifacts.PersistedArtifact, error) {
