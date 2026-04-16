@@ -20,7 +20,6 @@ import (
 
 var (
 	ErrAlreadyExists = errors.New("artifact already exists")
-	ErrNotFound      = errors.New("artifact not found")
 )
 
 const schema = `
@@ -237,7 +236,7 @@ func (db *DB) GetArtifact(ctx context.Context, id string) (artifacts.PersistedAr
 		&a.CandidateID, &a.BackendType, &a.BackendRef, &writtenAt, &a.WriteStatus,
 	)
 	if err == sql.ErrNoRows {
-		return artifacts.PersistedArtifact{}, ErrNotFound
+		return artifacts.PersistedArtifact{}, fmt.Errorf("artifact %q not found: %w", id, backend.ErrNotFound)
 	}
 	if err != nil {
 		return artifacts.PersistedArtifact{}, err
@@ -261,7 +260,7 @@ func (db *DB) GetByCandidate(ctx context.Context, candidateID string) (artifacts
 		&a.CandidateID, &a.BackendType, &a.BackendRef, &writtenAt, &a.WriteStatus,
 	)
 	if err == sql.ErrNoRows {
-		return artifacts.PersistedArtifact{}, ErrNotFound
+		return artifacts.PersistedArtifact{}, fmt.Errorf("artifact for candidate %q not found: %w", candidateID, backend.ErrNotFound)
 	}
 	if err != nil {
 		return artifacts.PersistedArtifact{}, err
