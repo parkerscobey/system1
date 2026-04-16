@@ -139,9 +139,12 @@ func TestSessionLifecycle_RegisterFocus(t *testing.T) {
 
 	ctx := context.Background()
 
-	lifecycle.Start(ctx)
+	_, err := lifecycle.Start(ctx)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
-	err := lifecycle.RegisterFocus(ctx, "SYS1-11: Test Task", []string{"system1", "ticket:SYS1-11", "area:backend"})
+	err = lifecycle.RegisterFocus(ctx, "SYS1-11: Test Task", []string{"system1", "ticket:SYS1-11", "area:backend"})
 	if err != nil {
 		t.Fatalf("RegisterFocus failed: %v", err)
 	}
