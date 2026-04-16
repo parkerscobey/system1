@@ -106,13 +106,12 @@ func (s *Service) extractSignal(ctx context.Context, span artifacts.EventSpan) *
 	signalScope := s.detectScope(ctx, rawContent)
 	signalConfidence := s.detectConfidence(ctx, rawContent)
 
-	spanText := s.summarizeSpan(span)
 	candidate := &artifacts.CandidateArtifact{
 		CandidateID:   generateCandidateID(),
 		ArtifactType:  signalType,
 		ProposedScope: signalScope,
-		Title:         s.generateTitle(signalType, spanText),
-		Body:          s.generateBody(signalType, spanText),
+		Title:         s.generateTitle(signalType, rawContent),
+		Body:          s.generateBody(signalType, rawContent),
 		Confidence:    signalConfidence,
 		Provenance: artifacts.Provenance{
 			SpanIDs:          []string{span.SpanID},
@@ -220,19 +219,6 @@ func (s *Service) detectConfidence(ctx context.Context, content string) string {
 	}
 
 	return artifacts.ConfidenceMid
-}
-
-func (s *Service) summarizeSpan(span artifacts.EventSpan) string {
-	if len(span.RawRefs) == 0 {
-		return ""
-	}
-
-	firstRef := span.RawRefs[0]
-	firstRef = strings.TrimSpace(firstRef)
-	if len(firstRef) > 500 {
-		firstRef = firstRef[:500] + "..."
-	}
-	return firstRef
 }
 
 func (s *Service) generateTitle(artifactType string, content string) string {
