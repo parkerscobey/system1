@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SessionLifecycle struct {
@@ -129,5 +131,5 @@ func (s *SessionLifecycle) ProjectID() string {
 }
 
 func generateSessionID() string {
-	return "sys1-" + time.Now().Format("20060102-150405")
+	return "sys1-" + time.Now().Format("20060102-150405") + "-" + uuid.New().String()[:8]
 }
