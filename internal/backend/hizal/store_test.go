@@ -41,6 +41,7 @@ func TestStore_TypeRegistry(t *testing.T) {
 func TestStore_SaveAndGet_Success(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-sg", []string{"MEMORY", "KNOWLEDGE"})
+	store.basePath = t.TempDir()
 
 	ctx := context.Background()
 	a := artifacts.PersistedArtifact{
@@ -78,6 +79,7 @@ func TestStore_SaveAndGet_Success(t *testing.T) {
 func TestStore_Save_MissingID(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-mid", []string{"MEMORY"})
+	store.basePath = t.TempDir()
 	ctx := context.Background()
 	a := artifacts.PersistedArtifact{
 		PersistedID:  "",
@@ -95,6 +97,7 @@ func TestStore_Save_MissingID(t *testing.T) {
 func TestStore_FindByType(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-findbytype", []string{"MEMORY", "KNOWLEDGE"})
+	store.basePath = t.TempDir()
 	ctx := context.Background()
 
 	a := artifacts.PersistedArtifact{
@@ -128,6 +131,7 @@ func TestStore_FindByType(t *testing.T) {
 func TestStore_Search(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-search", []string{"MEMORY"})
+	store.basePath = t.TempDir()
 	ctx := context.Background()
 
 	a := artifacts.PersistedArtifact{

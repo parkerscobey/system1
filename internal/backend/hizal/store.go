@@ -85,11 +85,11 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 
 	// Write to disk: ~/.system1/hizal/<project>/chunks/<type>/<id>.json
 	dir := filepath.Join(s.basePath, strings.ToLower(chunkType))
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create chunk dir: %w", err)
 	}
 	chunkPath := filepath.Join(dir, a.PersistedID+".json")
-	if err := os.WriteFile(chunkPath, content, 0644); err != nil {
+	if err := os.WriteFile(chunkPath, content, 0600); err != nil {
 		return fmt.Errorf("write chunk file: %w", err)
 	}
 
@@ -188,6 +188,7 @@ func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) 
 }
 
 func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]artifacts.PersistedArtifact, error) {
+	s.loadAllFromDisk()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var res []artifacts.PersistedArtifact
