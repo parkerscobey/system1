@@ -121,14 +121,14 @@ func TestBackendInterface(t *testing.T) {
 	artifact := artifacts.PersistedArtifact{
 		PersistedID:  "test-1",
 		ArtifactType: "MEMORY",
-		Scope:         "PROJECT",
-		Title:         "Test Memory",
-		Body:          "This is a test memory",
-		Confidence:    "high",
-		CandidateID:   "candidate-1",
-		BackendType:   "file",
-		WrittenAt:     now,
-		WriteStatus:   "created",
+		Scope:        "PROJECT",
+		Title:        "Test Memory",
+		Body:         "This is a test memory",
+		Confidence:   "high",
+		CandidateID:  "candidate-1",
+		BackendType:  "file",
+		WrittenAt:    now,
+		WriteStatus:  "created",
 	}
 
 	if err := be.Save(ctx, artifact); err != nil {

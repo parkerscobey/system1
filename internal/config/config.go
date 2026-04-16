@@ -19,7 +19,7 @@ type Config struct {
 	EnableDebug     bool
 	UseMCPServer    bool
 	BackendType     string
-	HizalProjectID string
+	HizalProjectID  string
 }
 
 func Load() (Config, error) {
@@ -38,7 +38,7 @@ func Load() (Config, error) {
 		EnableDebug:     strings.EqualFold(envOr("SYSTEM1_DEBUG", "false"), "true"),
 		UseMCPServer:    true,
 		BackendType:     envOr("SYSTEM1_BACKEND_TYPE", "file"),
-		HizalProjectID: envOr("SYSTEM1_HIZAL_PROJECT_ID", ""),
+		HizalProjectID:  envOr("SYSTEM1_HIZAL_PROJECT_ID", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -57,6 +57,12 @@ func (c Config) Validate() error {
 	}
 	if len(c.EnabledTypes) == 0 {
 		return fmt.Errorf("at least one enabled type is required")
+	}
+	if c.BackendType != "file" && c.BackendType != "hizal" {
+		return fmt.Errorf("invalid backend type %q: must be one of \"file\", \"hizal\"", c.BackendType)
+	}
+	if c.BackendType == "hizal" && c.HizalProjectID == "" {
+		return fmt.Errorf("hizal backend requires HizalProjectID to be set (SYSTEM1_HIZAL_PROJECT_ID)")
 	}
 	return nil
 }
