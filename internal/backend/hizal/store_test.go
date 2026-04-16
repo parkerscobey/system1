@@ -2,7 +2,10 @@ package hizal
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,6 +159,49 @@ func TestStore_Search(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Fatalf("Search returned %d results, want 1", len(results))
+	}
+}
+
+func TestStore_Search_CorruptChunkReturnsError(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-search-corrupt", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	dir := filepath.Join(store.basePath, "memory")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := store.Search(ctx, "anything", 10)
+	if err == nil {
+		t.Fatal("expected Search to fail on corrupt chunk")
+	}
+}
+
+func TestStore_Get_CorruptChunkReturnsError(t *testing.T) {
+	logger := slog.Default()
+	store := NewStore(logger, "test-project-get-corrupt", []string{"MEMORY"})
+	store.basePath = t.TempDir()
+	ctx := context.Background()
+
+	dir := filepath.Join(store.basePath, "memory")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "art1.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err := store.Get(ctx, "art1")
+	if err == nil {
+		t.Fatal("expected Get to fail on corrupt chunk")
+	}
+	if errors.Is(err, backend.ErrNotFound) {
+		t.Fatalf("expected corrupt chunk error, got ErrNotFound: %v", err)
 	}
 }
 

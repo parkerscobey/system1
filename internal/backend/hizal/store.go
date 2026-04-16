@@ -55,14 +55,14 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 
 	chunkType := s.mapArtifactTypeToChunk(a.ArtifactType)
 	prov := map[string]any{
-		"source_ids":                 a.Provenance.SourceIDs,
-		"session_ids":                a.Provenance.SessionIDs,
-		"span_ids":                   a.Provenance.SpanIDs,
-		"event_ids":                  a.Provenance.EventIDs,
-		"raw_refs":                   a.Provenance.RawRefs,
-		"evidence_snippets":          a.Provenance.EvidenceSnippets,
-		"extraction_model":           a.Provenance.ExtractionModel,
-		"derived_from_artifact_ids":  a.Provenance.DerivedFromArtifactIDs,
+		"source_ids":                a.Provenance.SourceIDs,
+		"session_ids":               a.Provenance.SessionIDs,
+		"span_ids":                  a.Provenance.SpanIDs,
+		"event_ids":                 a.Provenance.EventIDs,
+		"raw_refs":                  a.Provenance.RawRefs,
+		"evidence_snippets":         a.Provenance.EvidenceSnippets,
+		"extraction_model":          a.Provenance.ExtractionModel,
+		"derived_from_artifact_ids": a.Provenance.DerivedFromArtifactIDs,
 	}
 	if !a.Provenance.ExtractionTime.IsZero() {
 		prov["extraction_timestamp"] = a.Provenance.ExtractionTime.Format(time.RFC3339)
@@ -147,7 +147,10 @@ func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact
 }
 
 func (s *Store) GetByCandidate(ctx context.Context, candidateID string) (artifacts.PersistedArtifact, error) {
-	s.loadAllFromDisk()
+	if err := s.loadAllFromDisk(); err != nil {
+		return artifacts.PersistedArtifact{}, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, a := range s.chunks {
@@ -162,8 +165,9 @@ func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifact
 	if !s.typeRegistry.Has(artifactType) {
 		return nil, nil
 	}
-
-	s.loadTypeFromDisk(artifactType)
+	if err := s.loadTypeFromDisk(artifactType); err != nil {
+		return nil, err
+	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -177,7 +181,10 @@ func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifact
 }
 
 func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) ([]artifacts.PersistedArtifact, error) {
-	s.loadAllFromDisk()
+	if err := s.loadAllFromDisk(); err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var res []artifacts.PersistedArtifact
@@ -191,7 +198,10 @@ func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) 
 }
 
 func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]artifacts.PersistedArtifact, error) {
-	s.loadAllFromDisk()
+	if err := s.loadAllFromDisk(); err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var res []artifacts.PersistedArtifact
@@ -211,8 +221,9 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifact
 	if query == "" {
 		return nil, nil
 	}
-
-	s.loadAllFromDisk()
+	if err := s.loadAllFromDisk(); err != nil {
+		return nil, err
+	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -260,6 +271,9 @@ func (s *Store) loadFromDisk(id string) (artifacts.PersistedArtifact, error) {
 	}
 	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return artifacts.PersistedArtifact{}, backend.ErrNotFound
+		}
 		return artifacts.PersistedArtifact{}, fmt.Errorf("read chunks dir: %w", err)
 	}
 	for _, entry := range entries {
@@ -269,44 +283,56 @@ func (s *Store) loadFromDisk(id string) (artifacts.PersistedArtifact, error) {
 		path := filepath.Join(s.basePath, entry.Name(), id+".json")
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return artifacts.PersistedArtifact{}, fmt.Errorf("read chunk %q: %w", path, err)
 		}
 		var chunkData map[string]any
 		if err := json.Unmarshal(data, &chunkData); err != nil {
-			continue
+			return artifacts.PersistedArtifact{}, fmt.Errorf("decode chunk %q: %w", path, err)
 		}
 		return chunkDataToArtifact(chunkData, path), nil
 	}
 	return artifacts.PersistedArtifact{}, backend.ErrNotFound
 }
 
-func (s *Store) loadTypeFromDisk(artifactType string) {
+func (s *Store) loadTypeFromDisk(artifactType string) error {
 	chunkType := s.mapArtifactTypeToChunk(artifactType)
 	dir := filepath.Join(s.basePath, strings.ToLower(chunkType))
-	s.loadDir(dir, artifactType)
+	return s.loadDir(dir, artifactType)
 }
 
-func (s *Store) loadAllFromDisk() {
+func (s *Store) loadAllFromDisk() error {
 	if s.basePath == "" {
-		return
+		return nil
 	}
 	entries, err := os.ReadDir(s.basePath)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read chunks dir: %w", err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		dir := filepath.Join(s.basePath, entry.Name())
-		s.loadDir(dir, "")
+		if err := s.loadDir(dir, ""); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (s *Store) loadDir(dir, filterType string) {
+func (s *Store) loadDir(dir, filterType string) error {
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read type dir %q: %w", dir, err)
 	}
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
@@ -323,11 +349,14 @@ func (s *Store) loadDir(dir, filterType string) {
 		path := filepath.Join(dir, f.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("read chunk %q: %w", path, err)
 		}
 		var chunkData map[string]any
 		if err := json.Unmarshal(data, &chunkData); err != nil {
-			continue
+			return fmt.Errorf("decode chunk %q: %w", path, err)
 		}
 		a := chunkDataToArtifact(chunkData, path)
 		if filterType != "" && a.ArtifactType != filterType {
@@ -340,6 +369,7 @@ func (s *Store) loadDir(dir, filterType string) {
 		}
 		s.mu.Unlock()
 	}
+	return nil
 }
 
 func chunkDataToArtifact(data map[string]any, path string) artifacts.PersistedArtifact {
