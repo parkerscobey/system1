@@ -19,6 +19,23 @@ import (
 	"github.com/XferOps/system1/internal/session"
 )
 
+func TestRunDemoUsesFallbackSessionLogWhenFixtureMissing(t *testing.T) {
+	skipSQLiteFTSTest(t)
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	fixturesDir := filepath.Join(tmpDir, "missing-fixtures")
+	stateDir := filepath.Join(tmpDir, "state")
+
+	if err := runDemo(ctx, fixturesDir, stateDir, false, true); err != nil {
+		t.Fatalf("runDemo should succeed with generated fallback fixture: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(stateDir, "session.jsonl")); err != nil {
+		t.Fatalf("expected fallback session log in stateDir: %v", err)
+	}
+}
+
 func TestDemoAcceptancePath(t *testing.T) {
 	skipSQLiteFTSTest(t)
 
