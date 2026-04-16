@@ -73,25 +73,23 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 		}
 	}
 
-	workDir, err := os.MkdirTemp("", "system1-demo-*")
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
 	}
-	defer os.RemoveAll(workDir)
 
 	fixtureLog := filepath.Join(fixturesDir, "session.jsonl")
 	if _, err := os.Stat(fixtureLog); os.IsNotExist(err) {
-		logger.Info("Creating demo fixture session log", "path", workDir)
-		if err := createDemoSessionLog(workDir); err != nil {
+		logger.Info("Creating demo fixture session log", "path", stateDir)
+		if err := createDemoSessionLog(stateDir); err != nil {
 			return fmt.Errorf("create demo fixtures: %w", err)
 		}
-		fixtureLog = filepath.Join(workDir, "session.jsonl")
+		fixtureLog = filepath.Join(stateDir, "session.jsonl")
 	}
 
 	cfg := config.Config{
-		StateDir:        filepath.Join(workDir, ".system1"),
-		ArtifactsDir:    filepath.Join(workDir, "artifacts"),
-		SQLitePath:      filepath.Join(workDir, "system1.db"),
+		StateDir:        stateDir,
+		ArtifactsDir:    filepath.Join(stateDir, "artifacts"),
+		SQLitePath:      filepath.Join(stateDir, "system1.db"),
 		LogLevel:        "debug",
 		LogFormat:       "text",
 		EnabledTypes:    []string{"MEMORY", "KNOWLEDGE"},
@@ -102,7 +100,7 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 
 	logger.Info("=== SYSTEM-1 MVP DEMO ===")
 	logger.Info("Step 1: Ingest session data")
-	logger.Info("  config", "work_dir", workDir, "log_path", fixtureLog)
+	logger.Info("  config", "state_dir", stateDir, "log_path", fixtureLog)
 
 	ingestSvc := ingest.NewService(logger, cfg)
 	ingestStats := &ingest.IngestStats{}
