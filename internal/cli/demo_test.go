@@ -28,10 +28,10 @@ func TestDemoAcceptancePath(t *testing.T) {
 	sessionLog := filepath.Join(tmpDir, "session.jsonl")
 
 	events := []string{
-		`{"event_id":"evt_1","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:00Z","event_type":"message","actor_type":"user","content":"I prefer clear APIs and well documented code"}`,
-		`{"event_id":"evt_2","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:01Z","event_type":"message","actor_type":"agent","content":"Noted your preference for clear APIs and good documentation"}`,
-		`{"event_id":"evt_3","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:02Z","event_type":"message","actor_type":"user","content":"The Go project uses cobra and sqlite3"}`,
-		`{"event_id":"evt_4","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:03Z","event_type":"message","actor_type":"agent","content":"Understood - Go with cobra CLI and sqlite3 storage"}`,
+		`{"event_id":"evt_1","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:00Z","event_type":"message","actor_type":"user","content":"I prefer clear APIs. I don't like when error messages are unclear."}`,
+		`{"event_id":"evt_2","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:01Z","event_type":"message","actor_type":"agent","content":"Remember that the user prefers clear APIs and good documentation."}`,
+		`{"event_id":"evt_3","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:02Z","event_type":"message","actor_type":"user","content":"The project uses Go with cobra for the CLI and sqlite3 for the database."}`,
+		`{"event_id":"evt_4","source_id":"test_agent","session_id":"test_session","timestamp":"2026-04-15T10:00:03Z","event_type":"message","actor_type":"agent","content":"The codebase architecture uses the Go cobra CLI framework and sqlite3 database."}`,
 	}
 
 	f, err := os.Create(sessionLog)

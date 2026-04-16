@@ -9,7 +9,6 @@ type RawEvent struct {
 	Timestamp time.Time      `json:"timestamp"`
 	EventType string         `json:"event_type"`
 	ActorType string         `json:"actor_type"`
-	Content   string         `json:"content"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	RawRef    string         `json:"raw_ref"`
 }

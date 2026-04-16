@@ -27,7 +27,7 @@ func TestParseEvent(t *testing.T) {
 
 	line := `{"event_id":"evt_001","source_id":"agent_1","session_id":"sess_abc","timestamp":"2026-04-15T10:00:00Z","event_type":"message","actor_type":"user","content":"hello"}`
 
-	event, err := svc.parseEvent(context.Background(), line)
+	event, err := svc.parseEvent(context.Background(), line, cfg.SessionLogPath, 0)
 	if err != nil {
 		t.Fatalf("parseEvent failed: %v", err)
 	}
@@ -35,8 +35,8 @@ func TestParseEvent(t *testing.T) {
 	if event.EventID != "evt_001" {
 		t.Errorf("expected event_id evt_001, got %s", event.EventID)
 	}
-	if event.Content != "hello" {
-		t.Errorf("expected content hello, got %s", event.Content)
+	if event.RawRef == "" {
+		t.Errorf("expected non-empty RawRef")
 	}
 }
 
@@ -56,13 +56,13 @@ func TestBuildSpans(t *testing.T) {
 			EventID:   "evt_001",
 			SourceID:  "agent_1",
 			SessionID: "sess_abc",
-			Content:   "hi",
+			RawRef:    "/path/to/log:0",
 		},
 		{
 			EventID:   "evt_002",
 			SourceID:  "agent_1",
 			SessionID: "sess_abc",
-			Content:   "there",
+			RawRef:    "/path/to/log:50",
 		},
 	}
 
@@ -96,20 +96,20 @@ func TestBuildSpansWithBoundary(t *testing.T) {
 			EventID:   "evt_001",
 			SourceID:  "agent_1",
 			SessionID: "sess_abc",
-			Content:   "hi",
+			RawRef:    "/path/to/log:0",
 		},
 		{
 			EventID:   "evt_002",
 			SourceID:  "agent_1",
 			SessionID: "sess_abc",
-			Content:   "response",
+			RawRef:    "/path/to/log:50",
 			Metadata:  map[string]any{"turn_boundary": true},
 		},
 		{
 			EventID:   "evt_003",
 			SourceID:  "agent_1",
 			SessionID: "sess_abc",
-			Content:   "followup",
+			RawRef:    "/path/to/log:100",
 		},
 	}
 
