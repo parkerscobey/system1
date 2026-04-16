@@ -9,7 +9,7 @@ import (
 	"time"
 
 	artifactslib "github.com/XferOps/system1/internal/artifacts"
-	"github.com/XferOps/system1/internal/backend/file"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
 	"github.com/XferOps/system1/internal/session"
 )
@@ -24,10 +24,10 @@ type Result struct {
 type Service struct {
 	logger  *slog.Logger
 	cfg     config.Config
-	backend *file.Store
+	backend backend.Backend
 }
 
-func NewService(logger *slog.Logger, cfg config.Config, backend *file.Store) *Service {
+func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
 	return &Service{logger: logger, cfg: cfg, backend: backend}
 }
 

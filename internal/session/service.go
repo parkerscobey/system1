@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/XferOps/system1/internal/artifacts"
-	"github.com/XferOps/system1/internal/backend/file"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
 )
 
@@ -24,12 +24,12 @@ type StartResult struct {
 type Service struct {
 	logger  *slog.Logger
 	cfg     config.Config
-	backend *file.Store
+	backend backend.Backend
 }
 
 const ambientSnapshotFilename = ".ambient_context.json"
 
-func NewService(logger *slog.Logger, cfg config.Config, backend *file.Store) *Service {
+func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
 	return &Service{logger: logger, cfg: cfg, backend: backend}
 }
 

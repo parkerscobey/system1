@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
-	"github.com/XferOps/system1/internal/backend/file"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
 	"github.com/google/uuid"
 )
@@ -35,13 +35,13 @@ const (
 type Service struct {
 	logger       *slog.Logger
 	cfg          config.Config
-	backend      *file.Store
+	backend      backend.Backend
 	mu           sync.RWMutex
 	deferred     map[string]artifacts.CandidateArtifact
 	enabledTypes map[string]bool
 }
 
-func NewService(logger *slog.Logger, cfg config.Config, backend *file.Store) *Service {
+func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
 	enabledTypes := make(map[string]bool)
 	for _, t := range cfg.EnabledTypes {
 		enabledTypes[strings.ToUpper(t)] = true
@@ -123,7 +123,7 @@ func (s *Service) ResolveDeferred(ctx context.Context) ([]artifacts.CandidateArt
 			continue
 		}
 
-		if !errors.Is(err, file.ErrNotFound) {
+		if !errors.Is(err, backend.ErrNotFound) {
 			s.logger.ErrorContext(ctx, "failed to check candidate persistence",
 				slog.String("candidate_id", candidate.CandidateID),
 				"error", err)
@@ -184,7 +184,7 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 		Confidence:   candidate.Confidence,
 		Provenance:   candidate.Provenance,
 		CandidateID:  candidate.CandidateID,
-		BackendType:  "file",
+		BackendType:  string(s.backend.Type()),
 		BackendRef:   "",
 		WrittenAt:    time.Now().UTC(),
 		WriteStatus:  "created",

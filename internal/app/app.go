@@ -4,7 +4,9 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/backend/file"
+	"github.com/XferOps/system1/internal/backend/hizal"
 	"github.com/XferOps/system1/internal/config"
 	"github.com/XferOps/system1/internal/daemon"
 	"github.com/XferOps/system1/internal/extract"
@@ -18,7 +20,7 @@ import (
 type App struct {
 	Config             config.Config
 	Logger             *slog.Logger
-	Backend            *file.Store
+	Backend            backend.Backend
 	SessionService     *session.Service
 	Introspection      *introspect.Service
 	ExtractService     *extract.Service
@@ -37,15 +39,23 @@ func New() (*App, error) {
 
 	logger := logging.New(cfg.LogLevel, cfg.LogFormat)
 
-	backend, err := file.NewStore(logger, cfg)
-	if err != nil {
-		return nil, err
+	var be backend.Backend
+	switch cfg.BackendType {
+	case "hizal":
+		logger.Info("using hizal backend", "project_id", cfg.HizalProjectID)
+		be = hizal.NewStore(logger, cfg.HizalProjectID, cfg.EnabledTypes)
+	default:
+		logger.Info("using file backend")
+		be, err = file.NewStore(logger, cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	sessionSvc := session.NewService(logger, cfg, backend)
-	introspectionSvc := introspect.NewService(logger, cfg, backend)
+	sessionSvc := session.NewService(logger, cfg, be)
+	introspectionSvc := introspect.NewService(logger, cfg, be)
 	extractSvc := extract.NewService(logger, cfg)
-	policySvc := policy.NewService(logger, cfg, backend)
+	policySvc := policy.NewService(logger, cfg, be)
 	daemonRunner := daemon.NewRunner(logger, cfg, sessionSvc, introspectionSvc)
 
 	health := obs.NewHealth(logger)
@@ -55,7 +65,7 @@ func New() (*App, error) {
 	return &App{
 		Config:             cfg,
 		Logger:             logger,
-		Backend:            backend,
+		Backend:            be,
 		SessionService:     sessionSvc,
 		Introspection:      introspectionSvc,
 		ExtractService:     extractSvc,

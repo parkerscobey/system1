@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
 	ErrAlreadyExists = errors.New("artifact already exists")
-	ErrNotFound      = errors.New("artifact not found")
 )
 
 const schema = `
@@ -185,6 +185,14 @@ func (s *Store) Close() error {
 	return nil
 }
 
+func (s *Store) Type() backend.BackendType {
+	return backend.BackendTypeFile
+}
+
+func (s *Store) TypeRegistry(ctx context.Context) ([]string, error) {
+	return s.cfg.EnabledTypes, nil
+}
+
 func (db *DB) Exists(ctx context.Context, id string) (bool, error) {
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM artifacts WHERE persisted_id = ?", id).Scan(&count)
@@ -228,7 +236,7 @@ func (db *DB) GetArtifact(ctx context.Context, id string) (artifacts.PersistedAr
 		&a.CandidateID, &a.BackendType, &a.BackendRef, &writtenAt, &a.WriteStatus,
 	)
 	if err == sql.ErrNoRows {
-		return artifacts.PersistedArtifact{}, ErrNotFound
+		return artifacts.PersistedArtifact{}, fmt.Errorf("artifact %q not found: %w", id, backend.ErrNotFound)
 	}
 	if err != nil {
 		return artifacts.PersistedArtifact{}, err
@@ -252,7 +260,7 @@ func (db *DB) GetByCandidate(ctx context.Context, candidateID string) (artifacts
 		&a.CandidateID, &a.BackendType, &a.BackendRef, &writtenAt, &a.WriteStatus,
 	)
 	if err == sql.ErrNoRows {
-		return artifacts.PersistedArtifact{}, ErrNotFound
+		return artifacts.PersistedArtifact{}, fmt.Errorf("artifact for candidate %q not found: %w", candidateID, backend.ErrNotFound)
 	}
 	if err != nil {
 		return artifacts.PersistedArtifact{}, err
