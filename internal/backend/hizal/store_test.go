@@ -1,11 +1,13 @@
 package hizal
 
 import (
-	"context"
-	"log/slog"
-	"testing"
+    "context"
+    "log/slog"
+    "testing"
+    "time"
 
-	"github.com/XferOps/system1/internal/backend"
+    "github.com/XferOps/system1/internal/artifacts"
+    "github.com/XferOps/system1/internal/backend"
 )
 
 func TestStore_NewStore(t *testing.T) {
@@ -34,6 +36,55 @@ func TestStore_TypeRegistry(t *testing.T) {
 	if len(types) == 0 {
 		t.Error("TypeRegistry returned empty types")
 	}
+}
+
+func TestStore_SaveAndGet_Success(t *testing.T) {
+    logger := slog.Default()
+    store := NewStore(logger, "test-project", []string{"MEMORY", "KNOWLEDGE"})
+
+    ctx := context.Background()
+    a := artifacts.PersistedArtifact{
+        PersistedID:  "art1",
+        ArtifactType: "MEMORY",
+        Scope:        string(artifacts.ScopeProject),
+        Title:        "Test artifact",
+        Body:         "body",
+        Confidence:   artifacts.ConfidenceHigh,
+        CandidateID:  "cand1",
+        BackendType:  "hizal",
+        BackendRef:   "",
+        WrittenAt:    time.Now(),
+        WriteStatus:  "written",
+    }
+
+    if err := store.Save(ctx, a); err != nil {
+        t.Fatalf("Save failed: %v", err)
+    }
+
+    got, err := store.Get(ctx, a.PersistedID)
+    if err != nil {
+        t.Fatalf("Get after Save failed: %v", err)
+    }
+    if got.PersistedID != a.PersistedID || got.ArtifactType != a.ArtifactType {
+        t.Fatalf("unexpected retrieved artifact: %+v", got)
+    }
+}
+
+func TestStore_Save_MissingID(t *testing.T) {
+    logger := slog.Default()
+    store := NewStore(logger, "test-project", []string{"MEMORY"})
+    ctx := context.Background()
+    a := artifacts.PersistedArtifact{
+        PersistedID:  "",
+        ArtifactType: "MEMORY",
+        Title:        "No ID",
+        Body:         "body",
+        WrittenAt:    time.Now(),
+        WriteStatus:  "written",
+    }
+    if err := store.Save(ctx, a); err == nil {
+        t.Fatalf("expected error when persisting without ID, got nil")
+    }
 }
 
 func TestStore_MappingFunctions(t *testing.T) {
