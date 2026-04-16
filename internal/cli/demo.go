@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/backend/file"
+	"github.com/XferOps/system1/internal/backend/hizal"
 	"github.com/XferOps/system1/internal/config"
 	"github.com/XferOps/system1/internal/extract"
 	"github.com/XferOps/system1/internal/ingest"
@@ -89,17 +91,18 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 		fixtureLog = fallbackLog
 	}
 
-	cfg := config.Config{
-		StateDir:        stateDir,
-		ArtifactsDir:    filepath.Join(stateDir, "artifacts"),
-		SQLitePath:      filepath.Join(stateDir, "system1.db"),
-		LogLevel:        "debug",
-		LogFormat:       "text",
-		EnabledTypes:    []string{"MEMORY", "KNOWLEDGE"},
-		SessionLogPath:  fixtureLog,
-		DefaultPassMode: "reflective",
-		EnableDebug:     verbose,
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
 	}
+	cfg.StateDir = stateDir
+	cfg.ArtifactsDir = filepath.Join(stateDir, "artifacts")
+	cfg.SQLitePath = filepath.Join(stateDir, "system1.db")
+	cfg.LogLevel = "debug"
+	cfg.LogFormat = "text"
+	cfg.SessionLogPath = fixtureLog
+	cfg.DefaultPassMode = "reflective"
+	cfg.EnableDebug = verbose
 
 	logger.Info("=== SYSTEM-1 MVP DEMO ===")
 	logger.Info("Step 1: Ingest session data")
@@ -156,17 +159,18 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	}
 
 	logger.Info("Step 3: Policy evaluation (dedup, approval, deferral)")
-	backend, err := file.NewStore(logger, cfg)
+	store, err := newDemoBackend(logger, cfg)
 	if err != nil {
-		logger.Warn("Could not create file backend (FTS5 may not be available in this SQLite build)",
+		logger.Warn("Could not create configured backend",
+			"backend_type", cfg.BackendType,
 			"error", err)
 		logger.Info("  -> Running in demo-only mode without persistence")
-		backend = nil
-	} else {
-		defer backend.Close()
+		store = nil
+	} else if store != nil {
+		defer store.Close()
 	}
 
-	policySvc := policy.NewService(logger, cfg, backend)
+	policySvc := policy.NewService(logger, cfg, store)
 
 	var approved []artifacts.CandidateArtifact
 	var deferredCount int
@@ -191,7 +195,7 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	logger.Info("  -> Approved", "count", len(approved))
 	logger.Info("  -> Deferred", "count", deferredCount)
 
-	if backend == nil {
+	if store == nil {
 		logger.Info("Step 4: Skipping persistence (no backend available)")
 		logger.Info("Step 5: Skipping session start (no backend available)")
 		logger.Info("Step 6: Skipping introspect (no backend available)")
@@ -223,7 +227,7 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	logger.Info("  -> Persisted artifacts", "count", len(persisted))
 
 	logger.Info("Step 5: Start session (ambient context + Waking Mind)")
-	sessionSvc := session.NewService(logger, cfg, backend)
+	sessionSvc := session.NewService(logger, cfg, store)
 
 	sessionResult, err := sessionSvc.Start(ctx)
 	if err != nil {
@@ -238,7 +242,7 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	}
 
 	logger.Info("Step 6: Introspect queries (grounded recall verification)")
-	introspectionSvc := introspect.NewService(logger, cfg, backend)
+	introspectionSvc := introspect.NewService(logger, cfg, store)
 
 	testQueries := []string{
 		"what did I learn about preferences",
@@ -270,6 +274,16 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	)
 
 	return nil
+}
+
+func newDemoBackend(logger *slog.Logger, cfg config.Config) (backend.Backend, error) {
+	switch cfg.BackendType {
+	case string(backend.BackendTypeHizal):
+		logger.Info("using hizal backend for demo", "project_id", cfg.HizalProjectID)
+		return hizal.NewStore(logger, cfg.HizalProjectID, cfg.EnabledTypes), nil
+	default:
+		return file.NewStore(logger, cfg)
+	}
 }
 
 func loadSpansFromIngest(cfg config.Config) ([]artifacts.EventSpan, error) {

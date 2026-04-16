@@ -22,6 +22,7 @@ var (
 	ErrLowConfidence    = fmt.Errorf("candidate confidence too low for approval")
 	ErrDuplicate        = fmt.Errorf("candidate is duplicate")
 	ErrAmbiguous        = fmt.Errorf("candidate too ambiguous for decision")
+	ErrNoBackend        = fmt.Errorf("policy service has no backend configured (evaluate-only mode)")
 )
 
 type Decision string
@@ -102,6 +103,10 @@ func (s *Service) Evaluate(ctx context.Context, candidate artifacts.CandidateArt
 }
 
 func (s *Service) ResolveDeferred(ctx context.Context) ([]artifacts.CandidateArtifact, error) {
+	if s.backend == nil {
+		return nil, ErrNoBackend
+	}
+
 	s.mu.Lock()
 	count := len(s.deferred)
 	s.mu.Unlock()
@@ -168,6 +173,10 @@ func (s *Service) ResolveDeferred(ctx context.Context) ([]artifacts.CandidateArt
 }
 
 func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.CandidateArtifact) (artifacts.PersistedArtifact, error) {
+	if s.backend == nil {
+		return artifacts.PersistedArtifact{}, ErrNoBackend
+	}
+
 	if candidate.Status != artifacts.StatusApproved {
 		s.logger.ErrorContext(ctx, "cannot persist candidate that is not approved",
 			slog.String("candidate_id", candidate.CandidateID),
@@ -254,6 +263,12 @@ func (s *Service) validatePolicy(ctx context.Context, candidate artifacts.Candid
 }
 
 func (s *Service) checkDedup(ctx context.Context, candidate artifacts.CandidateArtifact) (bool, artifacts.PersistedArtifact, error) {
+	if s.backend == nil {
+		s.logger.DebugContext(ctx, "skipping dedup, no backend configured",
+			slog.String("candidate_id", candidate.CandidateID))
+		return false, artifacts.PersistedArtifact{}, nil
+	}
+
 	exactMatches, err := s.backend.FindByType(ctx, candidate.ArtifactType)
 	if err != nil {
 		return false, artifacts.PersistedArtifact{}, err
