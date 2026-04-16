@@ -78,12 +78,16 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	}
 
 	fixtureLog := filepath.Join(fixturesDir, "session.jsonl")
+	fallbackLog := filepath.Join(stateDir, "session.jsonl")
 	if _, err := os.Stat(fixtureLog); os.IsNotExist(err) {
-		logger.Info("Creating demo fixture session log", "path", stateDir)
-		if err := createDemoSessionLog(stateDir); err != nil {
-			return fmt.Errorf("create demo fixtures: %w", err)
+		if _, err := os.Stat(fallbackLog); os.IsNotExist(err) {
+			logger.Info("Creating demo fixture session log", "path", stateDir)
+			if err := createDemoSessionLog(stateDir); err != nil {
+				return fmt.Errorf("create demo fixtures: %w", err)
+			}
+		} else {
+			fixtureLog = fallbackLog
 		}
-		fixtureLog = filepath.Join(stateDir, "session.jsonl")
 	}
 
 	cfg := config.Config{
