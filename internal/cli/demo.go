@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -292,29 +294,50 @@ func loadSpansFromIngest(cfg config.Config) ([]artifacts.EventSpan, error) {
 func buildDemoSpans(f *os.File) ([]artifacts.EventSpan, error) {
 	var events []artifacts.RawEvent
 
-	scanner := bufio.NewScanner(f)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	filePath := f.Name()
+
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek to start: %w", err)
+	}
+
+	reader := bufio.NewReader(f)
+	lineStartOffset := int64(0)
+
+	for {
+		offsetBeforeRead := lineStartOffset
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("read line: %w", err)
+		}
+
+		line = strings.TrimSpace(line)
 		if line == "" {
+			if err == io.EOF {
+				break
+			}
+			lineStartOffset, _ = f.Seek(0, io.SeekCurrent)
+			lineStartOffset -= int64(reader.Buffered())
 			continue
 		}
 
 		var event artifacts.RawEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			return nil, fmt.Errorf("parse event at line %d: %w", lineNum, err)
+			return nil, fmt.Errorf("parse event at offset %d: %w", offsetBeforeRead, err)
 		}
 
 		if event.EventID == "" {
-			return nil, fmt.Errorf("event at line %d missing event_id", lineNum)
+			return nil, fmt.Errorf("event at offset %d missing event_id", offsetBeforeRead)
 		}
 
+		event.RawRef = fmt.Sprintf("%s:%d", filePath, offsetBeforeRead)
 		events = append(events, event)
-	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
+		if err == io.EOF {
+			break
+		}
+
+		lineStartOffset, _ = f.Seek(0, io.SeekCurrent)
+		lineStartOffset -= int64(reader.Buffered())
 	}
 
 	if len(events) == 0 {

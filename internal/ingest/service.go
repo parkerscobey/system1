@@ -113,8 +113,10 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 
 	reader := bufio.NewReader(file)
 	var pendingEvents []artifacts.RawEvent
+	lineStartOffset := cursor.LastOffset
 
 	for {
+		offsetBeforeRead := lineStartOffset
 		line, err := reader.ReadString('\n')
 		if errors.Is(err, io.EOF) {
 			break
@@ -125,10 +127,12 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 
 		line = strings.TrimSpace(line)
 		if line == "" {
+			lineStartOffset, _ = file.Seek(0, io.SeekCurrent)
+			lineStartOffset -= int64(reader.Buffered())
 			continue
 		}
 
-		event, err := s.parseEvent(ctx, line)
+		event, err := s.parseEvent(ctx, line, logPath, offsetBeforeRead)
 		if err != nil {
 			s.logger.WarnContext(ctx, "skipping malformed event", slog.String("error", err.Error()))
 			continue
@@ -137,6 +141,9 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 		stats.EventsProcessed++
 		pendingEvents = append(pendingEvents, *event)
 		stats.LastEventID = event.EventID
+
+		lineStartOffset, _ = file.Seek(0, io.SeekCurrent)
+		lineStartOffset -= int64(reader.Buffered())
 	}
 
 	if len(pendingEvents) == 0 {
@@ -184,11 +191,11 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	return stats, nil
 }
 
-func (s *Service) parseEvent(ctx context.Context, line string) (*artifacts.RawEvent, error) {
+func (s *Service) parseEvent(ctx context.Context, line string, logPath string, offset int64) (*artifacts.RawEvent, error) {
 	var raw json.RawMessage
 	event := artifacts.RawEvent{
 		Metadata: make(map[string]any),
-		RawRef:   line,
+		RawRef:   fmt.Sprintf("%s:%d", logPath, offset),
 	}
 
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {

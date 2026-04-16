@@ -1,9 +1,13 @@
 package extract
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -78,10 +82,20 @@ func (s *Service) extractSignal(ctx context.Context, span artifacts.EventSpan) *
 
 	var content strings.Builder
 	for _, ref := range span.RawRefs {
-		content.WriteString(ref)
+		text, err := readContentFromRef(ref)
+		if err != nil {
+			s.logger.WarnContext(ctx, "failed to read content from ref", slog.String("ref", ref), slog.String("error", err.Error()))
+			continue
+		}
+		content.WriteString(text)
 		content.WriteString("\n")
 	}
 	rawContent := content.String()
+
+	if rawContent == "" {
+		s.logger.DebugContext(ctx, "no content extracted from refs", slog.String("span_id", span.SpanID))
+		return nil
+	}
 
 	signalType := s.detectType(ctx, rawContent)
 	if signalType == "" {
@@ -272,4 +286,52 @@ func (s *Service) extractEvidence(span artifacts.EventSpan) []string {
 
 func generateCandidateID() string {
 	return uuid.New().String()
+}
+
+func readContentFromRef(ref string) (string, error) {
+	idx := strings.LastIndex(ref, ":")
+	if idx == -1 {
+		return "", fmt.Errorf("invalid ref format: no colon separator")
+	}
+
+	filePath := ref[:idx]
+	offsetStr := ref[idx+1:]
+	offset := int64(0)
+	if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil {
+		return "", fmt.Errorf("parse offset: %w", err)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek to offset: %w", err)
+	}
+
+	reader := bufio.NewReader(file)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("read line: %w", err)
+	}
+
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", fmt.Errorf("empty line at offset")
+	}
+
+	var event struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		return "", fmt.Errorf("parse event JSON: %w", err)
+	}
+
+	if event.Content == "" {
+		return "", fmt.Errorf("no content field in event")
+	}
+
+	return event.Content, nil
 }
