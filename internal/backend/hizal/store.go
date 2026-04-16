@@ -304,14 +304,16 @@ func (s *Store) loadDir(dir, filterType string) {
 	if err != nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
 			continue
 		}
 		id := strings.TrimSuffix(f.Name(), ".json")
-		if _, exists := s.chunks[id]; exists {
+		// Quick check under read lock to skip already-loaded chunks
+		s.mu.RLock()
+		_, exists := s.chunks[id]
+		s.mu.RUnlock()
+		if exists {
 			continue
 		}
 		path := filepath.Join(dir, f.Name())
@@ -327,7 +329,12 @@ func (s *Store) loadDir(dir, filterType string) {
 		if filterType != "" && a.ArtifactType != filterType {
 			continue
 		}
-		s.chunks[id] = a
+		// Write lock only for the actual map insert
+		s.mu.Lock()
+		if _, exists := s.chunks[id]; !exists {
+			s.chunks[id] = a
+		}
+		s.mu.Unlock()
 	}
 }
 

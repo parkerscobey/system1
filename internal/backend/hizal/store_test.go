@@ -67,6 +67,12 @@ func TestStore_SaveAndGet_Success(t *testing.T) {
 	if got.PersistedID != a.PersistedID || got.ArtifactType != a.ArtifactType {
 		t.Fatalf("unexpected retrieved artifact: %+v", got)
 	}
+	if got.BackendRef == "" {
+		t.Error("expected BackendRef to be populated")
+	}
+	if got.BackendMetadata == nil || got.BackendMetadata["store"] != "file" {
+		t.Error("expected BackendMetadata to contain store=file")
+	}
 }
 
 func TestStore_Save_MissingID(t *testing.T) {
