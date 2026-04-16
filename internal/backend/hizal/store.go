@@ -46,8 +46,24 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 	if a.PersistedID == "" {
 		return errors.New("persisted_id is required")
 	}
+	if strings.ContainsAny(a.PersistedID, `/\\`) || a.PersistedID == "." || a.PersistedID == ".." {
+		return errors.New("persisted_id contains invalid path characters")
+	}
 
 	chunkType := s.mapArtifactTypeToChunk(a.ArtifactType)
+	prov := map[string]any{
+		"source_ids":                 a.Provenance.SourceIDs,
+		"session_ids":                a.Provenance.SessionIDs,
+		"span_ids":                   a.Provenance.SpanIDs,
+		"event_ids":                  a.Provenance.EventIDs,
+		"raw_refs":                   a.Provenance.RawRefs,
+		"evidence_snippets":          a.Provenance.EvidenceSnippets,
+		"extraction_model":           a.Provenance.ExtractionModel,
+		"derived_from_artifact_ids":  a.Provenance.DerivedFromArtifactIDs,
+	}
+	if !a.Provenance.ExtractionTime.IsZero() {
+		prov["extraction_timestamp"] = a.Provenance.ExtractionTime.Format(time.RFC3339)
+	}
 	chunkData := map[string]any{
 		"artifact_id":   a.PersistedID,
 		"artifact_type": a.ArtifactType,
@@ -59,16 +75,7 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 		"backend_type":  a.BackendType,
 		"written_at":    a.WrittenAt.Format(time.RFC3339),
 		"write_status":  a.WriteStatus,
-		"provenance": map[string]any{
-			"source_ids":               a.Provenance.SourceIDs,
-			"session_ids":              a.Provenance.SessionIDs,
-			"span_ids":                 a.Provenance.SpanIDs,
-			"event_ids":                a.Provenance.EventIDs,
-			"raw_refs":                 a.Provenance.RawRefs,
-			"evidence_snippets":        a.Provenance.EvidenceSnippets,
-			"extraction_model":         a.Provenance.ExtractionModel,
-			"derived_from_artifact_ids": a.Provenance.DerivedFromArtifactIDs,
-		},
+		"provenance":    prov,
 	}
 
 	content, err := json.Marshal(chunkData)
@@ -86,16 +93,18 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 		return fmt.Errorf("write chunk file: %w", err)
 	}
 
-	// Update in-memory index
+	// Update in-memory index with deep-copied metadata
 	s.mu.Lock()
 	stored := a
 	stored.BackendRef = chunkPath
-	if stored.BackendMetadata == nil {
-		stored.BackendMetadata = map[string]any{}
+	newMeta := make(map[string]any, len(a.BackendMetadata)+3)
+	for k, v := range a.BackendMetadata {
+		newMeta[k] = v
 	}
-	stored.BackendMetadata["store"] = "file"
-	stored.BackendMetadata["chunk_path"] = chunkPath
-	stored.BackendMetadata["chunk_type"] = chunkType
+	newMeta["store"] = "file"
+	newMeta["chunk_path"] = chunkPath
+	newMeta["chunk_type"] = chunkType
+	stored.BackendMetadata = newMeta
 	s.chunks[a.PersistedID] = stored
 	s.mu.Unlock()
 
@@ -125,13 +134,17 @@ func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact
 
 	a, err := s.loadFromDisk(id)
 	if err != nil {
-		return artifacts.PersistedArtifact{}, backend.ErrNotFound
+		if errors.Is(err, backend.ErrNotFound) {
+			return artifacts.PersistedArtifact{}, backend.ErrNotFound
+		}
+		return artifacts.PersistedArtifact{}, fmt.Errorf("load persisted artifact %q: %w", id, err)
 	}
 	s.chunks[id] = a
 	return a, nil
 }
 
 func (s *Store) GetByCandidate(ctx context.Context, candidateID string) (artifacts.PersistedArtifact, error) {
+	s.loadAllFromDisk()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, a := range s.chunks {
@@ -147,7 +160,6 @@ func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifact
 		return nil, nil
 	}
 
-	// Rebuild index from disk for this type
 	s.loadTypeFromDisk(artifactType)
 
 	s.mu.RLock()
@@ -162,6 +174,7 @@ func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifact
 }
 
 func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) ([]artifacts.PersistedArtifact, error) {
+	s.loadAllFromDisk()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var res []artifacts.PersistedArtifact
@@ -179,7 +192,8 @@ func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]arti
 	defer s.mu.RUnlock()
 	var res []artifacts.PersistedArtifact
 	for _, a := range s.chunks {
-		if a.WrittenAt.After(since) && a.WrittenAt.Before(until) {
+		// Half-open interval [since, until)
+		if !a.WrittenAt.Before(since) && a.WrittenAt.Before(until) {
 			res = append(res, a)
 		}
 	}
@@ -194,7 +208,6 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifact
 		return nil, nil
 	}
 
-	// Rebuild index from disk
 	s.loadAllFromDisk()
 
 	s.mu.RLock()
@@ -367,16 +380,22 @@ func jsonStrSlice(data map[string]any, key string) []string {
 }
 
 func provenanceFromMap(m map[string]any) artifacts.Provenance {
-	return artifacts.Provenance{
-		SourceIDs:             jsonStrSlice(m, "source_ids"),
-		SessionIDs:            jsonStrSlice(m, "session_ids"),
-		SpanIDs:               jsonStrSlice(m, "span_ids"),
-		EventIDs:              jsonStrSlice(m, "event_ids"),
-		RawRefs:               jsonStrSlice(m, "raw_refs"),
-		EvidenceSnippets:      jsonStrSlice(m, "evidence_snippets"),
-		ExtractionModel:       jsonStr(m, "extraction_model"),
+	p := artifacts.Provenance{
+		SourceIDs:              jsonStrSlice(m, "source_ids"),
+		SessionIDs:             jsonStrSlice(m, "session_ids"),
+		SpanIDs:                jsonStrSlice(m, "span_ids"),
+		EventIDs:               jsonStrSlice(m, "event_ids"),
+		RawRefs:                jsonStrSlice(m, "raw_refs"),
+		EvidenceSnippets:       jsonStrSlice(m, "evidence_snippets"),
+		ExtractionModel:        jsonStr(m, "extraction_model"),
 		DerivedFromArtifactIDs: jsonStrSlice(m, "derived_from_artifact_ids"),
 	}
+	if v := jsonStr(m, "extraction_timestamp"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			p.ExtractionTime = t
+		}
+	}
+	return p
 }
 
 func (s *Store) mapArtifactTypeToChunk(artifactType string) string {
