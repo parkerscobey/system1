@@ -184,7 +184,7 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 		Confidence:   candidate.Confidence,
 		Provenance:   candidate.Provenance,
 		CandidateID:  candidate.CandidateID,
-		BackendType:  "file",
+		BackendType:  string(s.backend.Type()),
 		BackendRef:   "",
 		WrittenAt:    time.Now().UTC(),
 		WriteStatus:  "created",
