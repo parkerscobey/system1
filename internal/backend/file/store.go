@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
+	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -183,6 +184,14 @@ func (s *Store) Close() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+func (s *Store) Type() backend.BackendType {
+	return backend.BackendTypeFile
+}
+
+func (s *Store) TypeRegistry(ctx context.Context) ([]string, error) {
+	return s.cfg.EnabledTypes, nil
 }
 
 func (db *DB) Exists(ctx context.Context, id string) (bool, error) {

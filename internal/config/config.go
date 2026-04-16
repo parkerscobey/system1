@@ -18,6 +18,8 @@ type Config struct {
 	SessionLogPath  string
 	EnableDebug     bool
 	UseMCPServer    bool
+	BackendType     string
+	HizalProjectID string
 }
 
 func Load() (Config, error) {
@@ -35,6 +37,8 @@ func Load() (Config, error) {
 		SessionLogPath:  envOr("SYSTEM1_SESSION_LOG_PATH", filepath.Join(stateDir, "sessions.jsonl")),
 		EnableDebug:     strings.EqualFold(envOr("SYSTEM1_DEBUG", "false"), "true"),
 		UseMCPServer:    true,
+		BackendType:     envOr("SYSTEM1_BACKEND_TYPE", "file"),
+		HizalProjectID: envOr("SYSTEM1_HIZAL_PROJECT_ID", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {
