@@ -3,6 +3,7 @@ package hizal
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type SessionLifecycle struct {
 	sessionID  string
 	isActive   bool
 	sessionTTL time.Duration
+	mu         sync.RWMutex
 }
 
 type SessionResult struct {
@@ -29,7 +31,7 @@ func NewSessionLifecycle(logger *slog.Logger, projectID string) *SessionLifecycl
 	}
 }
 
-func (s *SessionLifecycle) Start(ctx context.Context) (SessionResult, error) {
+func (s *SessionLifecycle) startLocked(ctx context.Context) (SessionResult, error) {
 	s.logger.InfoContext(ctx, "hizal session start initiated",
 		"project_id", s.projectID)
 
@@ -48,7 +50,17 @@ func (s *SessionLifecycle) Start(ctx context.Context) (SessionResult, error) {
 	}, nil
 }
 
+func (s *SessionLifecycle) Start(ctx context.Context) (SessionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.startLocked(ctx)
+}
+
 func (s *SessionLifecycle) End(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !s.isActive {
 		s.logger.WarnContext(ctx, "attempted to end inactive hizal session")
 		return nil
@@ -66,9 +78,12 @@ func (s *SessionLifecycle) End(ctx context.Context) error {
 }
 
 func (s *SessionLifecycle) Resume(ctx context.Context) (SessionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !s.isActive {
 		s.logger.WarnContext(ctx, "attempted to resume inactive session, starting new")
-		return s.Start(ctx)
+		return s.startLocked(ctx)
 	}
 
 	s.logger.InfoContext(ctx, "hizal session resumed",
@@ -83,8 +98,12 @@ func (s *SessionLifecycle) Resume(ctx context.Context) (SessionResult, error) {
 }
 
 func (s *SessionLifecycle) RegisterFocus(ctx context.Context, task string, tags []string) error {
+	s.mu.RLock()
+	sessionID := s.sessionID
+	s.mu.RUnlock()
+
 	s.logger.InfoContext(ctx, "registering focus with hizal",
-		"session_id", s.sessionID,
+		"session_id", sessionID,
 		"task", task,
 		"tags", tags)
 
@@ -92,14 +111,20 @@ func (s *SessionLifecycle) RegisterFocus(ctx context.Context, task string, tags 
 }
 
 func (s *SessionLifecycle) IsActive() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.isActive
 }
 
 func (s *SessionLifecycle) SessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.sessionID
 }
 
 func (s *SessionLifecycle) ProjectID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.projectID
 }
 
