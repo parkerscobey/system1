@@ -151,3 +151,18 @@ func TestSessionLifecycle_RegisterFocus(t *testing.T) {
 
 	lifecycle.End(ctx)
 }
+
+func TestSessionLifecycle_RegisterFocus_NoActiveSession(t *testing.T) {
+	logger := slog.Default()
+	lifecycle := NewSessionLifecycle(logger, "test-project")
+
+	ctx := context.Background()
+
+	err := lifecycle.RegisterFocus(ctx, "should fail", nil)
+	if err == nil {
+		t.Fatal("RegisterFocus should fail when no active session")
+	}
+	if err != ErrNoActiveSession {
+		t.Fatalf("expected ErrNoActiveSession, got %v", err)
+	}
+}

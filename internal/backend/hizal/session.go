@@ -2,12 +2,15 @@ package hizal
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var ErrNoActiveSession = fmt.Errorf("no active session")
 
 type SessionLifecycle struct {
 	logger     *slog.Logger
@@ -46,7 +49,7 @@ func (s *SessionLifecycle) startLocked(ctx context.Context) (SessionResult, erro
 
 	return SessionResult{
 		SessionID:      s.sessionID,
-		WakingMind:     "",
+		WakingMind:     fmt.Sprintf("Session started (Hizal backend, project %s, session %s).", s.projectID, s.sessionID),
 		AmbientContext: nil,
 		ChunkIDs:       nil,
 	}, nil
@@ -93,7 +96,7 @@ func (s *SessionLifecycle) Resume(ctx context.Context) (SessionResult, error) {
 
 	return SessionResult{
 		SessionID:      s.sessionID,
-		WakingMind:     "",
+		WakingMind:     fmt.Sprintf("Session resumed (Hizal backend, project %s, session %s).", s.projectID, s.sessionID),
 		AmbientContext: nil,
 		ChunkIDs:       nil,
 	}, nil
@@ -102,7 +105,12 @@ func (s *SessionLifecycle) Resume(ctx context.Context) (SessionResult, error) {
 func (s *SessionLifecycle) RegisterFocus(ctx context.Context, task string, tags []string) error {
 	s.mu.RLock()
 	sessionID := s.sessionID
+	active := s.isActive
 	s.mu.RUnlock()
+
+	if !active {
+		return ErrNoActiveSession
+	}
 
 	s.logger.InfoContext(ctx, "registering focus with hizal",
 		"session_id", sessionID,
