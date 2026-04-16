@@ -62,10 +62,23 @@ func TestStore_MappingFunctions(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("reverse-"+tt.wantChunk, func(t *testing.T) {
+		isOneWay := tt.artifactType == "IDENTITY"
+		name := tt.artifactType
+		if isOneWay {
+			name = "one-way-" + name
+		} else {
+			name = "bidir-" + name
+		}
+		t.Run(name, func(t *testing.T) {
 			got := store.mapChunkToArtifactType(tt.wantChunk)
-			if got != tt.artifactType && got != tt.wantChunk {
-				t.Errorf("mapChunkToArtifactType(%q) = %v, want %v or %v", tt.wantChunk, got, tt.artifactType, tt.wantChunk)
+			if isOneWay {
+				if got != tt.wantChunk {
+					t.Errorf("mapChunkToArtifactType(%q) = %v, want %v (one-way mapping)", tt.wantChunk, got, tt.wantChunk)
+				}
+			} else {
+				if got != tt.artifactType {
+					t.Errorf("mapChunkToArtifactType(%q) = %v, want %v", tt.wantChunk, got, tt.artifactType)
+				}
 			}
 		})
 	}
