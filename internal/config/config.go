@@ -89,6 +89,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("hizal backend requires HizalProjectID to be set (SYSTEM1_HIZAL_PROJECT_ID)")
 	}
 
+	if c.ModelTimeout <= 0 {
+		return fmt.Errorf("model timeout must be positive (got %v)", c.ModelTimeout)
+	}
+
 	switch c.ModelProvider {
 	case "", "none", "oracle":
 		// valid
