@@ -11,6 +11,7 @@ import (
 	artifactslib "github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
+	"github.com/XferOps/system1/internal/model"
 	"github.com/XferOps/system1/internal/session"
 )
 
@@ -22,13 +23,20 @@ type Result struct {
 }
 
 type Service struct {
-	logger  *slog.Logger
-	cfg     config.Config
-	backend backend.Backend
+	logger    *slog.Logger
+	cfg       config.Config
+	backend   backend.Backend
+	modelProv model.Provider
 }
 
 func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
 	return &Service{logger: logger, cfg: cfg, backend: backend}
+}
+
+// SetModelProvider sets the model provider for synthesis.
+// When set, this provider will be used to generate responses instead of snippet concatenation.
+func (s *Service) SetModelProvider(provider model.Provider) {
+	s.modelProv = provider
 }
 
 func (s *Service) Query(ctx context.Context, query string, debug bool) (Result, error) {
@@ -178,10 +186,38 @@ func (s *Service) queryBackend(ctx context.Context, query string) ([]artifactsli
 }
 
 func (s *Service) synthesizeResponse(query string, artifacts []artifactslib.PersistedArtifact, debug bool, source string) (Result, error) {
-	var sb strings.Builder
-
 	uniqueArtifacts := deduplicateArtifacts(artifacts)
 	recent := getRecentArtifacts(uniqueArtifacts, 5)
+
+	if len(recent) == 0 {
+		return Result{Answer: "No relevant artifacts found."}, nil
+	}
+
+	// Try model synthesis if provider is configured
+	if s.modelProv != nil {
+		answer, err := s.synthesizeWithModel(query, uniqueArtifacts, false, source)
+		if err == nil && answer != "" {
+			result := Result{
+				Answer:        strings.TrimSpace(answer),
+				DebugIncluded: debug,
+			}
+			if debug {
+				result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
+			}
+			return result, nil
+		}
+		if err != nil {
+			s.logger.Warn("model synthesis failed, falling back to heuristics", "error", err)
+		}
+	}
+
+	return s.synthesizeWithHeuristics(query, uniqueArtifacts, debug, source)
+}
+
+func (s *Service) synthesizeWithHeuristics(query string, artifacts []artifactslib.PersistedArtifact, debug bool, source string) (Result, error) {
+	var sb strings.Builder
+
+	recent := getRecentArtifacts(artifacts, 5)
 
 	if len(recent) == 0 {
 		return Result{Answer: "No relevant artifacts found."}, nil
@@ -211,19 +247,119 @@ func (s *Service) synthesizeResponse(query string, artifacts []artifactslib.Pers
 		DebugIncluded: debug,
 	}
 	if debug {
-		result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
+		result.ArtifactRefs, result.Evidence = collectDebugEvidence(artifacts)
 	}
 
 	return result, nil
 }
 
+func (s *Service) synthesizeWithModel(query string, artifacts []artifactslib.PersistedArtifact, isCalibration bool, source string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	prompt := buildModelPrompt(query, artifacts, isCalibration, source)
+	systemPrompt := buildSystemPrompt(isCalibration)
+
+	response, err := s.modelProv.Complete(ctx, prompt, systemPrompt)
+	if err != nil {
+		return "", fmt.Errorf("model completion failed: %w", err)
+	}
+
+	if response.Text == "" {
+		return "", fmt.Errorf("model returned empty response")
+	}
+
+	return response.Text, nil
+}
+
+func buildModelPrompt(query string, artifacts []artifactslib.PersistedArtifact, isCalibration bool, source string) string {
+	var sb strings.Builder
+
+	sb.WriteString("User Query: ")
+	sb.WriteString(query)
+	sb.WriteString("\n\n")
+
+	if isCalibration {
+		sb.WriteString("This is a calibration query - help identify what context might be missing.\n\n")
+	}
+
+	sb.WriteString("Source: ")
+	sb.WriteString(source)
+	sb.WriteString("\n\n")
+
+	sb.WriteString("Retrieved Artifacts:\n")
+	sb.WriteString("===================\n\n")
+
+	recent := getRecentArtifacts(artifacts, 10)
+	for i, a := range recent {
+		sb.WriteString(fmt.Sprintf("Artifact %d:\n", i+1))
+		sb.WriteString(fmt.Sprintf("  Type: %s\n", a.ArtifactType))
+		sb.WriteString(fmt.Sprintf("  Title: %s\n", a.Title))
+		body := a.Body
+		if len(body) > 300 {
+			body = body[:300] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  Body: %s\n", body))
+		if len(a.Provenance.EvidenceSnippets) > 0 {
+			sb.WriteString(fmt.Sprintf("  Evidence: %s\n", strings.Join(a.Provenance.EvidenceSnippets, "; ")))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\nPlease provide a grounded, natural-language answer based on the retrieved artifacts above.")
+	if isCalibration {
+		sb.WriteString(" Focus on identifying gaps or missing context that might be relevant to the user's query.")
+	}
+
+	return sb.String()
+}
+
+func buildSystemPrompt(isCalibration bool) string {
+	if isCalibration {
+		return `You are an introspection assistant helping a user identify gaps in their context.
+You have been given retrieved artifacts from the user's session history.
+Provide a helpful response that:
+1. Acknowledges what was found
+2. Identifies potential gaps or missing context
+3. Suggests areas worth exploring
+Be concise and natural. Do not invent information not present in the artifacts.`
+	}
+	return `You are an introspection assistant helping a user understand their context.
+You have been given retrieved artifacts from the user's session history.
+Provide a helpful, natural-language answer that synthesizes the information from the artifacts.
+Be grounded in the provided artifacts - don't hallucinate details.
+Be concise and direct. Focus on answering the user's query using the available context.`
+}
+
 func (s *Service) synthesizeCalibrationResponse(query string, artifacts []artifactslib.PersistedArtifact, debug bool) (Result, error) {
 	uniqueArtifacts := deduplicateArtifacts(artifacts)
 
+	// Try model synthesis if provider is configured
+	if s.modelProv != nil {
+		answer, err := s.synthesizeWithModel(query, uniqueArtifacts, true, "calibration")
+		if err == nil && answer != "" {
+			result := Result{
+				Answer:        strings.TrimSpace(answer),
+				DebugIncluded: debug,
+			}
+			if debug {
+				result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
+			}
+			return result, nil
+		}
+		if err != nil {
+			s.logger.Warn("model synthesis failed for calibration, falling back to heuristics", "error", err)
+		}
+	}
+
+	return s.synthesizeCalibrationWithHeuristics(query, uniqueArtifacts, debug)
+}
+
+func (s *Service) synthesizeCalibrationWithHeuristics(query string, artifacts []artifactslib.PersistedArtifact, debug bool) (Result, error) {
 	var sb strings.Builder
 	sb.WriteString("Let me think about what might be missing...\n\n")
 
-	topics := extractTopics(uniqueArtifacts)
+	topics := extractTopics(artifacts)
 	if len(topics) > 0 {
 		sb.WriteString("Based on what I've found, here are areas that might be worth exploring:\n\n")
 		for i, topic := range topics {
@@ -233,10 +369,10 @@ func (s *Service) synthesizeCalibrationResponse(query string, artifacts []artifa
 	}
 
 	var gaps []string
-	if len(uniqueArtifacts) < 3 {
+	if len(artifacts) < 3 {
 		gaps = append(gaps, "Limited session history - consider continuing the conversation to build more context.")
 	}
-	if !hasRecentArtifacts(uniqueArtifacts, 1*time.Hour) {
+	if !hasRecentArtifacts(artifacts, 1*time.Hour) {
 		gaps = append(gaps, "No very recent artifacts - current context may be sparse.")
 	}
 
@@ -254,7 +390,7 @@ func (s *Service) synthesizeCalibrationResponse(query string, artifacts []artifa
 		DebugIncluded: debug,
 	}
 	if debug {
-		result.ArtifactRefs, result.Evidence = collectDebugEvidence(uniqueArtifacts)
+		result.ArtifactRefs, result.Evidence = collectDebugEvidence(artifacts)
 	}
 
 	return result, nil
