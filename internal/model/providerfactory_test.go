@@ -13,8 +13,8 @@ func TestNewProviderOracle(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{
 		ModelProvider: "oracle",
-		OracleEngine: "api",
-		OracleModel:  "sonnet",
+		OracleEngine:  "api",
+		OracleModel:   "sonnet",
 	}
 
 	provider, err := NewProvider(cfg, logger)
@@ -27,12 +27,23 @@ func TestNewProviderOracle(t *testing.T) {
 	if provider.Name() != "oracle" {
 		t.Errorf("provider name = %q, expected oracle", provider.Name())
 	}
+
+	oracleProvider, ok := provider.(*OracleProvider)
+	if !ok {
+		t.Fatalf("expected *OracleProvider, got %T", provider)
+	}
+	if oracleProvider.config.Engine != cfg.OracleEngine {
+		t.Errorf("oracle engine = %q, expected %q", oracleProvider.config.Engine, cfg.OracleEngine)
+	}
+	if oracleProvider.config.Model != cfg.OracleModel {
+		t.Errorf("oracle model = %q, expected %q", oracleProvider.config.Model, cfg.OracleModel)
+	}
 }
 
 func TestNewProviderOpenRouter(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := config.Config{
-		ModelProvider:   "openrouter",
+		ModelProvider:    "openrouter",
 		OpenRouterAPIKey: "test-key",
 		OpenRouterModel:  "anthropic/claude-3-sonnet",
 	}
@@ -46,6 +57,20 @@ func TestNewProviderOpenRouter(t *testing.T) {
 	}
 	if provider.Name() != "openrouter" {
 		t.Errorf("provider name = %q, expected openrouter", provider.Name())
+	}
+
+	openRouterProvider, ok := provider.(*OpenRouterProvider)
+	if !ok {
+		t.Fatalf("expected *OpenRouterProvider, got %T", provider)
+	}
+	if openRouterProvider.config.APIKey != cfg.OpenRouterAPIKey {
+		t.Errorf("openrouter api key = %q, expected %q", openRouterProvider.config.APIKey, cfg.OpenRouterAPIKey)
+	}
+	if openRouterProvider.config.Model != cfg.OpenRouterModel {
+		t.Errorf("openrouter model = %q, expected %q", openRouterProvider.config.Model, cfg.OpenRouterModel)
+	}
+	if openRouterProvider.config.BaseURL != defaultOpenRouterBaseURL {
+		t.Errorf("openrouter base URL = %q, expected %q", openRouterProvider.config.BaseURL, defaultOpenRouterBaseURL)
 	}
 }
 

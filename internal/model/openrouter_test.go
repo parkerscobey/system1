@@ -78,11 +78,11 @@ func TestOpenRouterProviderCompleteSuccess(t *testing.T) {
 	if gotReq.Model != "openrouter/override-model" {
 		t.Fatalf("request model = %q, expected override model", gotReq.Model)
 	}
-	if gotReq.Temperature != 0.2 {
+	if gotReq.Temperature == nil || *gotReq.Temperature != 0.2 {
 		t.Fatalf("request temperature = %v, expected 0.2", gotReq.Temperature)
 	}
-	if gotReq.MaxTokens != 111 {
-		t.Fatalf("request max_tokens = %d, expected 111", gotReq.MaxTokens)
+	if gotReq.MaxTokens == nil || *gotReq.MaxTokens != 111 {
+		t.Fatalf("request max_tokens = %v, expected 111", gotReq.MaxTokens)
 	}
 	if len(gotReq.Messages) != 2 {
 		t.Fatalf("request messages len = %d, expected 2", len(gotReq.Messages))
@@ -146,6 +146,9 @@ func TestOpenRouterProviderStructuredOutput(t *testing.T) {
 		t.Fatalf("Complete() error = %v", err)
 	}
 
+	if gotReq.StructuredOutput == nil || len(gotReq.StructuredOutput.JSON) == 0 {
+		t.Fatal("expected structured_output JSON schema to be included in request")
+	}
 	if len(gotReq.Messages) != 2 {
 		t.Fatalf("messages len = %d, expected 2 (system + user)", len(gotReq.Messages))
 	}
@@ -178,6 +181,52 @@ func TestOpenRouterProviderStructuredOutput(t *testing.T) {
 	}
 	if parsed["answer"] != "ok" {
 		t.Fatalf("structured answer = %q, expected ok", parsed["answer"])
+	}
+}
+
+func TestOpenRouterProviderOmitsUnsetSamplingOptions(t *testing.T) {
+	var gotReq openRouterChatCompletionRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotReq); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenRouterProvider(OpenRouterConfig{
+		APIKey:  "test-key",
+		Model:   "openrouter/model",
+		BaseURL: server.URL,
+		Timeout: time.Second,
+	})
+
+	if _, err := provider.Complete(context.Background(), "prompt", "system"); err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+
+	if gotReq.Temperature != nil {
+		t.Fatalf("expected temperature to be omitted, got %v", gotReq.Temperature)
+	}
+	if gotReq.MaxTokens != nil {
+		t.Fatalf("expected max_tokens to be omitted, got %v", gotReq.MaxTokens)
+	}
+}
+
+func TestNewOpenRouterProviderDefaultsNonPositiveTimeout(t *testing.T) {
+	provider := NewOpenRouterProvider(OpenRouterConfig{Timeout: -1 * time.Second})
+	if provider.config.Timeout != 30*time.Second {
+		t.Fatalf("timeout = %v, expected 30s", provider.config.Timeout)
+	}
+	if provider.client.Timeout != 30*time.Second {
+		t.Fatalf("client timeout = %v, expected 30s", provider.client.Timeout)
 	}
 }
 

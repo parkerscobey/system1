@@ -39,8 +39,8 @@ type OpenRouterProvider struct {
 type openRouterChatCompletionRequest struct {
 	Model            string                      `json:"model"`
 	Messages         []openRouterMessage         `json:"messages"`
-	Temperature      float64                     `json:"temperature"`
-	MaxTokens        int                         `json:"max_tokens"`
+	Temperature      *float64                    `json:"temperature,omitempty"`
+	MaxTokens        *int                        `json:"max_tokens,omitempty"`
 	StructuredOutput *openRouterStructuredOutput `json:"structured_output,omitempty"`
 }
 
@@ -84,7 +84,7 @@ func NewOpenRouterProvider(config OpenRouterConfig) *OpenRouterProvider {
 	}
 	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
 
-	if config.Timeout == 0 {
+	if config.Timeout <= 0 {
 		config.Timeout = 30 * time.Second
 	}
 	if config.Logger == nil {
@@ -147,7 +147,7 @@ func (p *OpenRouterProvider) Complete(ctx context.Context, prompt string, system
 		return Response{}, fmt.Errorf("openrouter model is required")
 	}
 
-	if err := validateStructuredOutputOptions(options); err != nil {
+	if err := validateCompletionOptions(options); err != nil {
 		return Response{}, err
 	}
 
@@ -156,8 +156,8 @@ func (p *OpenRouterProvider) Complete(ctx context.Context, prompt string, system
 	requestPayload := openRouterChatCompletionRequest{
 		Model:            modelName,
 		Messages:         messages,
-		Temperature:      options.temperature,
-		MaxTokens:        options.maxTokens,
+		Temperature:      openRouterTemperature(options),
+		MaxTokens:        openRouterMaxTokens(options),
 		StructuredOutput: buildStructuredOutput(options),
 	}
 
@@ -333,6 +333,13 @@ func formatOpenRouterHTTPError(statusCode int, body []byte) string {
 	return fmt.Sprintf("openrouter request failed with status %d: %s", statusCode, message)
 }
 
+func validateCompletionOptions(opts options) error {
+	if opts.maxTokensSet && opts.maxTokens <= 0 {
+		return fmt.Errorf("max tokens must be greater than 0 when explicitly set")
+	}
+	return validateStructuredOutputOptions(opts)
+}
+
 func validateStructuredOutputOptions(opts options) error {
 	if opts.jsonSchema == "" {
 		return nil
@@ -348,6 +355,22 @@ func validateStructuredOutputOptions(opts options) error {
 		return fmt.Errorf("json schema must have a type field")
 	}
 	return nil
+}
+
+func openRouterTemperature(opts options) *float64 {
+	if !opts.temperatureSet {
+		return nil
+	}
+	temp := opts.temperature
+	return &temp
+}
+
+func openRouterMaxTokens(opts options) *int {
+	if !opts.maxTokensSet {
+		return nil
+	}
+	maxTokens := opts.maxTokens
+	return &maxTokens
 }
 
 func buildStructuredOutput(opts options) *openRouterStructuredOutput {

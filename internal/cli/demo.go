@@ -250,12 +250,12 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 		return fmt.Errorf("session start: %w", err)
 	}
 
-logger.Info("  -> Ambient context loaded", "items", len(sessionResult.AmbientContext))
+	logger.Info("  -> Ambient context loaded", "items", len(sessionResult.AmbientContext))
 	logger.Info("  -> Waking Mind generated", "length", len(sessionResult.WakingMind))
-	logger.Info("  -> Waking Mind content", "content", sessionResult.WakingMind)
 	logger.Info("  -> Provider used", "provider", providerName(provider))
 
 	if verbose {
+		logger.Info("  -> Waking Mind content", "content", sessionResult.WakingMind)
 		logger.Info("ambient_context", "artifact_ids", formatAmbientForLog(sessionResult.AmbientContext))
 		fmt.Println("\n=== WAKING MIND ===")
 		fmt.Println(sessionResult.WakingMind)
@@ -281,9 +281,11 @@ logger.Info("  -> Ambient context loaded", "items", len(sessionResult.AmbientCon
 			continue
 		}
 		logger.Info("  query: " + q)
-		logger.Info("  answer:", "text", result.Answer)
 		if verbose {
+			logger.Info("  answer:", "text", result.Answer)
 			fmt.Printf("\n--- ANSWER to: %s ---\n%s\n--- END ---\n", q, result.Answer)
+		} else {
+			logger.Info("  answer length", "chars", len(result.Answer))
 		}
 
 		if verbose && result.DebugIncluded {
@@ -544,7 +546,7 @@ func formatAmbientForLog(artifactIDs []string) string {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(fmt.Sprintf("%q", id))
+		fmt.Fprintf(&b, "%q", id)
 	}
 	b.WriteString("]")
 	return b.String()
