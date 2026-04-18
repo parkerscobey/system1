@@ -8,3 +8,4 @@ dist/
 system1
 .env
 
+.demo/
