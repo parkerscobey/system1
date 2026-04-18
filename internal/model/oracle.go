@@ -119,6 +119,9 @@ func (p *OracleProvider) Complete(ctx context.Context, prompt string, systemProm
 		args = append(args, "--model", model)
 	}
 
+	// Wait for oracle to complete (not background mode)
+	args = append(args, "--wait")
+
 	ctx, cancel := context.WithTimeout(ctx, p.config.Timeout)
 	defer cancel()
 
@@ -138,6 +141,9 @@ func (p *OracleProvider) Complete(ctx context.Context, prompt string, systemProm
 
 	duration := time.Since(start)
 	responseText := strings.TrimSpace(string(output))
+
+	// Strip oracle banner/preamble if present
+	responseText = stripOracleBanner(responseText)
 
 	response := Response{
 		Text: responseText,
@@ -167,6 +173,39 @@ func (p *OracleProvider) Complete(ctx context.Context, prompt string, systemProm
 		slog.Bool("has_structured", len(response.Structured) > 0))
 
 	return response, nil
+}
+
+// stripOracleBanner removes the oracle CLI banner and prompt echo from output.
+// Oracle output format:
+//   🧿 oracle 0.8.5 — <tagline>.
+//   Reattach via: oracle session <slug>
+//   Prompt:
+//   <prompt echo>
+//   ---
+//   <actual response>
+func stripOracleBanner(output string) string {
+	// If output doesn't start with the oracle banner, return as-is
+	if !strings.HasPrefix(output, "🧿") {
+		return output
+	}
+	// Look for the "---" separator that precedes the actual response
+	if idx := strings.Index(output, "\n---\n"); idx >= 0 {
+		return strings.TrimSpace(output[idx+5:])
+	}
+	// No separator found — strip banner lines and return remaining content
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			return strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+		}
+		if i > 0 && trimmed != "" && !strings.HasPrefix(line, "🧿") &&
+			!strings.HasPrefix(line, "Reattach via:") && !strings.HasPrefix(line, "Prompt:") &&
+			!strings.HasPrefix(line, "Pro runs") {
+			return strings.TrimSpace(strings.Join(lines[i:], "\n"))
+		}
+	}
+	return output
 }
 
 // createPromptFile creates a temporary file with the full prompt including system prompt.

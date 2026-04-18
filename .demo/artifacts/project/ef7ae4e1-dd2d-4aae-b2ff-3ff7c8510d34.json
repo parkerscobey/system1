@@ -1,0 +1,48 @@
+{
+  "persisted_id": "ef7ae4e1-dd2d-4aae-b2ff-3ff7c8510d34",
+  "artifact_type": "MEMORY",
+  "scope": "PROJECT",
+  "title": "[MEMORY] What are my preferences?\nI remember that you prefer clear APIs and documented endpoints. You also...",
+  "body": "1: What are my preferences?\n2: I remember that you prefer clear APIs and documented endpoints. You also like modular code with good test coverage.\n3: That's right. I also hate when error messages are unclear.\n4: Tell me about this codebase structure\n5: This is a Go project using cobra for CLI commands. It uses sqlite3 for storage with a file backend. The main components are ingest, extract, policy, session, and introspect services.\n6: Good, thanks. What else should I know about this project?",
+  "confidence": "medium",
+  "provenance": {
+    "source_ids": [
+      "demo_agent"
+    ],
+    "session_ids": [
+      "demo_session"
+    ],
+    "span_ids": [
+      "span_evt_1"
+    ],
+    "event_ids": [
+      "evt_1",
+      "evt_2",
+      "evt_3",
+      "evt_4",
+      "evt_5",
+      "evt_6"
+    ],
+    "raw_refs": [
+      ".demo/session.jsonl:0",
+      ".demo/session.jsonl:189",
+      ".demo/session.jsonl:470",
+      ".demo/session.jsonl:693",
+      ".demo/session.jsonl:895",
+      ".demo/session.jsonl:1243"
+    ],
+    "evidence_snippets": [
+      ".demo/session.jsonl:0",
+      ".demo/session.jsonl:189",
+      ".demo/session.jsonl:470",
+      ".demo/session.jsonl:693",
+      ".demo/session.jsonl:895"
+    ],
+    "extraction_timestamp": "0001-01-01T00:00:00Z"
+  },
+  "candidate_id": "32f86294-90b1-48b6-a9df-ceae5c9e031b",
+  "backend_type": "file",
+  "backend_ref": "",
+  "written_at": "2026-04-18T03:24:09.850489Z",
+  "write_status": "created"
+}

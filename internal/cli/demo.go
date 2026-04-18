@@ -20,6 +20,7 @@ import (
 	"github.com/XferOps/system1/internal/extract"
 	"github.com/XferOps/system1/internal/ingest"
 	"github.com/XferOps/system1/internal/introspect"
+	"github.com/XferOps/system1/internal/model"
 	"github.com/XferOps/system1/internal/policy"
 	"github.com/XferOps/system1/internal/session"
 	"github.com/spf13/cobra"
@@ -131,6 +132,19 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	logger.Info("Step 2: Extract candidate artifacts")
 	extractSvc := extract.NewService(logger, cfg)
 
+	// Initialize model provider if configured
+	var provider model.Provider
+	if cfg.ModelProvider != "" && cfg.ModelProvider != "none" {
+		provider = model.NewOracleProvider(model.OracleConfig{
+			Engine:  cfg.OracleEngine,
+			Model:   cfg.OracleModel,
+			Timeout: cfg.ModelTimeout,
+			Logger:  logger,
+		})
+		extractSvc = extractSvc.WithModelProvider(provider)
+		logger.Info("model provider initialized", "provider", provider.Name())
+	}
+
 	spans, err := loadSpansFromIngest(cfg)
 	if err != nil {
 		return fmt.Errorf("load spans: %w", err)
@@ -228,6 +242,9 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 
 	logger.Info("Step 5: Start session (ambient context + Waking Mind)")
 	sessionSvc := session.NewService(logger, cfg, store)
+	if provider != nil {
+		sessionSvc.SetModelProvider(provider)
+	}
 
 	sessionResult, err := sessionSvc.Start(ctx)
 	if err != nil {
@@ -243,6 +260,9 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 
 	logger.Info("Step 6: Introspect queries (grounded recall verification)")
 	introspectionSvc := introspect.NewService(logger, cfg, store)
+	if provider != nil {
+		introspectionSvc.SetModelProvider(provider)
+	}
 
 	testQueries := []string{
 		"what did I learn about preferences",

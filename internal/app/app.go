@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/XferOps/system1/internal/backend"
@@ -12,6 +13,7 @@ import (
 	"github.com/XferOps/system1/internal/extract"
 	"github.com/XferOps/system1/internal/introspect"
 	"github.com/XferOps/system1/internal/logging"
+	"github.com/XferOps/system1/internal/model"
 	"github.com/XferOps/system1/internal/obs"
 	"github.com/XferOps/system1/internal/policy"
 	"github.com/XferOps/system1/internal/session"
@@ -21,6 +23,7 @@ type App struct {
 	Config             config.Config
 	Logger             *slog.Logger
 	Backend            backend.Backend
+	ModelProvider      model.Provider
 	SessionService     *session.Service
 	Introspection      *introspect.Service
 	ExtractService     *extract.Service
@@ -52,10 +55,28 @@ func New() (*App, error) {
 		}
 	}
 
+	// Initialize model provider if configured
+	var provider model.Provider
+	if cfg.ModelProvider != "" && cfg.ModelProvider != "none" {
+		provider, err = initModelProvider(cfg, logger)
+		if err != nil {
+			return nil, fmt.Errorf("init model provider %q: %w", cfg.ModelProvider, err)
+		}
+		logger.Info("model provider initialized", "provider", provider.Name())
+	}
+
 	sessionSvc := session.NewService(logger, cfg, be)
 	introspectionSvc := introspect.NewService(logger, cfg, be)
 	extractSvc := extract.NewService(logger, cfg)
 	policySvc := policy.NewService(logger, cfg, be)
+
+	// Wire model provider into services
+	if provider != nil {
+		sessionSvc.SetModelProvider(provider)
+		introspectionSvc.SetModelProvider(provider)
+		extractSvc = extractSvc.WithModelProvider(provider)
+	}
+
 	daemonRunner := daemon.NewRunner(logger, cfg, sessionSvc, introspectionSvc)
 
 	health := obs.NewHealth(logger)
@@ -66,6 +87,7 @@ func New() (*App, error) {
 		Config:             cfg,
 		Logger:             logger,
 		Backend:            be,
+		ModelProvider:      provider,
 		SessionService:     sessionSvc,
 		Introspection:      introspectionSvc,
 		ExtractService:     extractSvc,
@@ -75,6 +97,20 @@ func New() (*App, error) {
 		DecisionLog:        decisionLog,
 		IntrospectionTrace: introspectionTrace,
 	}, nil
+}
+
+func initModelProvider(cfg config.Config, logger *slog.Logger) (model.Provider, error) {
+	switch cfg.ModelProvider {
+	case "oracle":
+		return model.NewOracleProvider(model.OracleConfig{
+			Engine:  cfg.OracleEngine,
+			Model:   cfg.OracleModel,
+			Timeout: cfg.ModelTimeout,
+			Logger:  logger,
+		}), nil
+	default:
+		return nil, fmt.Errorf("unknown model provider: %q (supported: oracle)", cfg.ModelProvider)
+	}
 }
 
 func (a *App) Run(ctx context.Context) error {
