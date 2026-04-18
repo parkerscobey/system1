@@ -6,67 +6,7 @@ import (
 	"testing"
 )
 
-// MockProvider implements Provider for testing.
-type MockProvider struct {
-	name        string
-	responses   []Response
-	errors      []error
-	callCount   int
-	healthError error
-}
-
-func NewMockProvider(name string) *MockProvider {
-	return &MockProvider{
-		name:      name,
-		responses: []Response{},
-		errors:    []error{},
-	}
-}
-
-func (m *MockProvider) Name() string {
-	return m.name
-}
-
-func (m *MockProvider) Health(ctx context.Context) error {
-	return m.healthError
-}
-
-func (m *MockProvider) Complete(ctx context.Context, prompt string, systemPrompt string, opts ...Option) (Response, error) {
-	defer func() { m.callCount++ }()
-
-	if m.callCount < len(m.errors) && m.errors[m.callCount] != nil {
-		return Response{}, m.errors[m.callCount]
-	}
-
-	if m.callCount < len(m.responses) {
-		return m.responses[m.callCount], nil
-	}
-
-	// Default response
-	return Response{
-		Text: "mock response",
-		Metadata: ResponseMetadata{
-			Provider: m.name,
-			Duration: "100ms",
-		},
-	}, nil
-}
-
-func (m *MockProvider) AddResponse(response Response) {
-	m.responses = append(m.responses, response)
-}
-
-func (m *MockProvider) AddError(err error) {
-	m.errors = append(m.errors, err)
-}
-
-func (m *MockProvider) SetHealthError(err error) {
-	m.healthError = err
-}
-
-func (m *MockProvider) CallCount() int {
-	return m.callCount
-}
+// MockProvider is defined in mock.go for shared use across packages
 
 func TestOptions(t *testing.T) {
 	tests := []struct {
