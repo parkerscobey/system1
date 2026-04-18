@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/backend"
 	"github.com/XferOps/system1/internal/config"
+	"github.com/XferOps/system1/internal/model"
 )
 
 type StartResult struct {
@@ -22,15 +24,25 @@ type StartResult struct {
 }
 
 type Service struct {
-	logger  *slog.Logger
-	cfg     config.Config
-	backend backend.Backend
+	logger   *slog.Logger
+	cfg      config.Config
+	backend  backend.Backend
+	provider model.Provider
 }
 
-const ambientSnapshotFilename = ".ambient_context.json"
+const (
+	ambientSnapshotFilename = ".ambient_context.json"
+	maxWakingMindTokens     = 500
+)
 
 func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
 	return &Service{logger: logger, cfg: cfg, backend: backend}
+}
+
+// SetModelProvider sets the model provider for Waking Mind generation.
+// When set, this provider will be used to generate orientation framing instead of snippet concatenation.
+func (s *Service) SetModelProvider(provider model.Provider) {
+	s.provider = provider
 }
 
 func (s *Service) Start(ctx context.Context) (StartResult, error) {
@@ -114,6 +126,48 @@ func (s *Service) generateWakingMind(artifacts []artifacts.PersistedArtifact) st
 		return "No recent context available. Starting fresh."
 	}
 
+	// Try model-driven generation if provider is available
+	if s.provider != nil {
+		mind, err := s.generateWakingMindWithModel(artifacts)
+		if err == nil && mind != "" {
+			s.logger.Debug("model waking mind generation succeeded",
+				slog.Int("artifacts", len(artifacts)),
+				slog.Int("mind_length", len(mind)))
+			return mind
+		}
+		s.logger.Warn("model waking mind generation failed, falling back to heuristics",
+			slog.String("error", err.Error()))
+	}
+
+	return s.generateWakingMindHeuristic(artifacts)
+}
+
+func (s *Service) generateWakingMindWithModel(artifacts []artifacts.PersistedArtifact) (string, error) {
+	timeout := s.cfg.ModelTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	prompt := buildWakingMindPrompt(artifacts)
+	systemPrompt := wakingMindSystemPrompt
+
+	response, err := s.provider.Complete(ctx, prompt, systemPrompt,
+		model.WithMaxTokens(maxWakingMindTokens),
+		model.WithTemperature(0.7))
+	if err != nil {
+		return "", fmt.Errorf("model completion: %w", err)
+	}
+
+	if response.Text == "" {
+		return "", fmt.Errorf("model returned empty response")
+	}
+
+	return strings.TrimSpace(response.Text), nil
+}
+
+func (s *Service) generateWakingMindHeuristic(artifacts []artifacts.PersistedArtifact) string {
 	var sb strings.Builder
 	sb.WriteString("=== WAKING MIND ===\n\n")
 	sb.WriteString("Recent context:\n\n")
@@ -128,6 +182,48 @@ func (s *Service) generateWakingMind(artifacts []artifacts.PersistedArtifact) st
 	}
 
 	sb.WriteString("\n--- END ---\n")
+
+	return sb.String()
+}
+
+const wakingMindSystemPrompt = `You are a session orientation assistant. Your job is to produce a concise "waking mind" — a brief orientation framing that helps an agent understand what ambient context is available at session start.
+
+Given a set of recent artifacts from the agent's history, produce a natural-language orientation that:
+1. Summarizes the key themes and topics present in the context
+2. Highlights the most important or recent artifacts
+3. Notes any connections between artifacts
+4. Gives the agent a sense of "what I know going in"
+
+Be concise. Write in first person as if the agent is orienting itself.
+Do not invent information not present in the artifacts.
+Do not list artifacts as a numbered list — synthesize them into a coherent narrative.`
+
+func buildWakingMindPrompt(artifacts []artifacts.PersistedArtifact) string {
+	var sb strings.Builder
+
+	sb.WriteString("You are starting a new session. Here are your ambient context artifacts from recent history:\n\n")
+
+	for i, a := range artifacts {
+		sb.WriteString(fmt.Sprintf("Artifact %d:\n", i+1))
+		sb.WriteString(fmt.Sprintf("  Type: %s\n", a.ArtifactType))
+		sb.WriteString(fmt.Sprintf("  Title: %s\n", a.Title))
+		body := a.Body
+		if len(body) > 300 {
+			body = body[:300] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  Body: %s\n", body))
+		sb.WriteString(fmt.Sprintf("  Written: %s\n", a.WrittenAt.Format("2006-01-02 15:04")))
+		if len(a.Provenance.EvidenceSnippets) > 0 {
+			maxEvidence := len(a.Provenance.EvidenceSnippets)
+			if maxEvidence > 3 {
+				maxEvidence = 3
+			}
+			sb.WriteString(fmt.Sprintf("  Evidence: %s\n", strings.Join(a.Provenance.EvidenceSnippets[:maxEvidence], "; ")))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("Produce your waking mind orientation now.")
 
 	return sb.String()
 }
