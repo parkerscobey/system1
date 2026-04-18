@@ -14,6 +14,7 @@ import (
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/config"
+	"github.com/XferOps/system1/internal/model"
 	"github.com/google/uuid"
 )
 
@@ -23,6 +24,7 @@ type Service struct {
 	logger       *slog.Logger
 	cfg          config.Config
 	enabledTypes map[string]bool
+	provider     model.Provider
 }
 
 func NewService(logger *slog.Logger, cfg config.Config) *Service {
@@ -31,6 +33,11 @@ func NewService(logger *slog.Logger, cfg config.Config) *Service {
 		enabled[strings.ToUpper(t)] = true
 	}
 	return &Service{logger: logger, cfg: cfg, enabledTypes: enabled}
+}
+
+func (s *Service) WithModelProvider(provider model.Provider) *Service {
+	s.provider = provider
+	return s
 }
 
 func (s *Service) Extract(ctx context.Context, span artifacts.EventSpan) ([]artifacts.CandidateArtifact, error) {
@@ -97,6 +104,145 @@ func (s *Service) extractSignal(ctx context.Context, span artifacts.EventSpan) *
 		return nil
 	}
 
+	// Try model-driven extraction first if provider is available
+	if s.provider != nil {
+		candidate := s.extractWithModel(ctx, span, rawContent)
+		if candidate != nil {
+			s.logger.DebugContext(ctx, "model extraction succeeded", slog.String("span_id", span.SpanID))
+			return candidate
+		}
+		// Fallback to heuristic extraction if model fails
+		s.logger.DebugContext(ctx, "model extraction failed, falling back to heuristics", slog.String("span_id", span.SpanID))
+	}
+
+	return s.extractWithHeuristics(ctx, span, rawContent)
+}
+
+// modelResponse represents the structured JSON response from the model
+type modelResponse struct {
+	ArtifactType  string `json:"artifact_type"`
+	Scope         string `json:"scope"`
+	Confidence    string `json:"confidence"`
+	Title         string `json:"title"`
+	Body          string `json:"body"`
+	ShouldExtract bool   `json:"should_extract"`
+}
+
+const extractionSystemPrompt = `You are an artifact extraction assistant. Your task is to analyze content and extract structured artifacts.
+
+You must respond with a valid JSON object containing these fields:
+- artifact_type: either "MEMORY" (user preferences, habits, personal info) or "KNOWLEDGE" (technical facts, architecture, implementation details)
+- scope: one of "AGENT" (agent-specific), "PROJECT" (project-level), or "ORG" (organization-wide)
+- confidence: one of "low", "medium", or "high" indicating how certain you are
+- title: a short descriptive title (max 100 chars)
+- body: the relevant content to preserve (relevant excerpts)
+- should_extract: boolean indicating if this content is worth extracting (true) or should be skipped (false)
+
+If the content lacks signal or is too vague, set should_extract to false.
+Be conservative - only extract when there's clear value.`
+
+func (s *Service) extractWithModel(ctx context.Context, span artifacts.EventSpan, rawContent string) *artifacts.CandidateArtifact {
+	prompt := fmt.Sprintf(`Analyze the following content and extract an artifact if present:
+
+---
+%s
+---
+
+Extract a structured artifact or abstain if there's insufficient signal.`, rawContent)
+
+	response, err := s.provider.Complete(ctx, prompt, extractionSystemPrompt, model.WithStructuredOutput())
+	if err != nil {
+		s.logger.WarnContext(ctx, "model extraction failed", slog.String("error", err.Error()))
+		return nil
+	}
+
+	var modelResp modelResponse
+	if len(response.Structured) > 0 {
+		if err := json.Unmarshal(response.Structured, &modelResp); err != nil {
+			s.logger.WarnContext(ctx, "failed to parse model structured response", slog.String("error", err.Error()))
+			return nil
+		}
+	} else if response.Text != "" {
+		// Try to parse the text as JSON
+		if err := json.Unmarshal([]byte(response.Text), &modelResp); err != nil {
+			s.logger.WarnContext(ctx, "failed to parse model text response as JSON", slog.String("error", err.Error()))
+			return nil
+		}
+	} else {
+		s.logger.WarnContext(ctx, "model returned empty response")
+		return nil
+	}
+
+	// Check if model abstained
+	if !modelResp.ShouldExtract {
+		s.logger.DebugContext(ctx, "model abstained from extraction")
+		return nil
+	}
+
+	// Validate required fields
+	if modelResp.ArtifactType == "" || modelResp.Scope == "" || modelResp.Confidence == "" {
+		s.logger.WarnContext(ctx, "model response missing required fields")
+		return nil
+	}
+
+	// Normalize values
+	modelResp.ArtifactType = strings.ToUpper(modelResp.ArtifactType)
+	modelResp.Scope = strings.ToUpper(modelResp.Scope)
+	modelResp.Confidence = strings.ToLower(modelResp.Confidence)
+
+	// Validate artifact type
+	if !s.isValidType(modelResp.ArtifactType) {
+		s.logger.DebugContext(ctx, "model returned invalid artifact type",
+			slog.String("type", modelResp.ArtifactType))
+		return nil
+	}
+
+	// Validate scope
+	validScopes := map[string]bool{
+		string(artifacts.ScopeAgent):   true,
+		string(artifacts.ScopeProject): true,
+		string(artifacts.ScopeOrg):     true,
+	}
+	if !validScopes[modelResp.Scope] {
+		s.logger.DebugContext(ctx, "model returned invalid scope", slog.String("scope", modelResp.Scope))
+		return nil
+	}
+
+	// Validate confidence
+	validConfidences := map[string]bool{
+		artifacts.ConfidenceLow:  true,
+		artifacts.ConfidenceMid:  true,
+		artifacts.ConfidenceHigh: true,
+	}
+	if !validConfidences[modelResp.Confidence] {
+		modelResp.Confidence = artifacts.ConfidenceMid
+	}
+
+	candidate := &artifacts.CandidateArtifact{
+		CandidateID:   generateCandidateID(),
+		ArtifactType:  modelResp.ArtifactType,
+		ProposedScope: modelResp.Scope,
+		Title:         modelResp.Title,
+		Body:          modelResp.Body,
+		Confidence:    modelResp.Confidence,
+		Provenance: artifacts.Provenance{
+			SpanIDs:          []string{span.SpanID},
+			EventIDs:         span.EventIDs,
+			RawRefs:          span.RawRefs,
+			SessionIDs:       []string{span.SessionID},
+			SourceIDs:        []string{span.SourceID},
+			EvidenceSnippets: s.extractEvidence(span),
+			ExtractionModel:  s.provider.Name(),
+			ExtractionTime:   time.Now().UTC(),
+		},
+		Status:    artifacts.StatusProposed,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	return candidate
+}
+
+func (s *Service) extractWithHeuristics(ctx context.Context, span artifacts.EventSpan, rawContent string) *artifacts.CandidateArtifact {
 	signalType := s.detectType(ctx, rawContent)
 	if signalType == "" {
 		s.logger.DebugContext(ctx, "no signal detected in span", slog.String("span_id", span.SpanID))
