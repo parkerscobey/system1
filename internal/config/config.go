@@ -24,10 +24,15 @@ type Config struct {
 	HizalProjectID  string
 
 	// Model provider configuration
-	ModelProvider string        // default: "none"
-	OracleEngine  string        // default: "api"
-	OracleModel   string        // default: empty (uses oracle default)
-	ModelTimeout  time.Duration // default: 30 seconds
+	ModelProvider     string        // default: "none"
+	OracleEngine      string        // default: "api"
+	OracleModel       string        // default: empty (uses oracle default)
+	OpenRouterAPIKey  string        // required when provider=openrouter
+	OpenRouterModel   string        // required when provider=openrouter
+	OpenRouterBaseURL string        // default: "https://openrouter.ai/api/v1"
+	OpenRouterAppName string        // optional app name metadata (X-Title)
+	OpenRouterSiteURL string        // optional site metadata (HTTP-Referer)
+	ModelTimeout      time.Duration // default: 30 seconds
 }
 
 func Load() (Config, error) {
@@ -49,10 +54,15 @@ func Load() (Config, error) {
 		HizalProjectID:  envOr("SYSTEM1_HIZAL_PROJECT_ID", ""),
 
 		// Model provider configuration
-		ModelProvider: envOr("SYSTEM1_MODEL_PROVIDER", "none"),
-		OracleEngine:  envOr("SYSTEM1_ORACLE_ENGINE", "api"),
-		OracleModel:   envOr("SYSTEM1_ORACLE_MODEL", ""),
-		ModelTimeout:  envDuration("SYSTEM1_MODEL_TIMEOUT", 30*time.Second),
+		ModelProvider:     envOr("SYSTEM1_MODEL_PROVIDER", "none"),
+		OracleEngine:      envOr("SYSTEM1_ORACLE_ENGINE", "api"),
+		OracleModel:       envOr("SYSTEM1_ORACLE_MODEL", ""),
+		OpenRouterAPIKey:  envOr("SYSTEM1_OPENROUTER_API_KEY", ""),
+		OpenRouterModel:   envOr("SYSTEM1_OPENROUTER_MODEL", ""),
+		OpenRouterBaseURL: envOr("SYSTEM1_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+		OpenRouterAppName: envOr("SYSTEM1_OPENROUTER_APP_NAME", ""),
+		OpenRouterSiteURL: envOr("SYSTEM1_OPENROUTER_SITE_URL", ""),
+		ModelTimeout:      envDuration("SYSTEM1_MODEL_TIMEOUT", 30*time.Second),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -78,6 +88,21 @@ func (c Config) Validate() error {
 	if c.BackendType == "hizal" && c.HizalProjectID == "" {
 		return fmt.Errorf("hizal backend requires HizalProjectID to be set (SYSTEM1_HIZAL_PROJECT_ID)")
 	}
+
+	switch c.ModelProvider {
+	case "", "none", "oracle":
+		// valid
+	case "openrouter":
+		if strings.TrimSpace(c.OpenRouterAPIKey) == "" {
+			return fmt.Errorf("openrouter provider requires OpenRouterAPIKey to be set (SYSTEM1_OPENROUTER_API_KEY)")
+		}
+		if strings.TrimSpace(c.OpenRouterModel) == "" {
+			return fmt.Errorf("openrouter provider requires OpenRouterModel to be set (SYSTEM1_OPENROUTER_MODEL)")
+		}
+	default:
+		return fmt.Errorf("unknown model provider %q: must be one of \"none\", \"oracle\", \"openrouter\"", c.ModelProvider)
+	}
+
 	return nil
 }
 

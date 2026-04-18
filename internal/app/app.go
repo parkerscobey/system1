@@ -108,8 +108,18 @@ func initModelProvider(cfg config.Config, logger *slog.Logger) (model.Provider, 
 			Timeout: cfg.ModelTimeout,
 			Logger:  logger,
 		}), nil
+	case "openrouter":
+		return model.NewOpenRouterProvider(model.OpenRouterConfig{
+			APIKey:  cfg.OpenRouterAPIKey,
+			Model:   cfg.OpenRouterModel,
+			BaseURL: cfg.OpenRouterBaseURL,
+			AppName: cfg.OpenRouterAppName,
+			SiteURL: cfg.OpenRouterSiteURL,
+			Timeout: cfg.ModelTimeout,
+			Logger:  logger,
+		}), nil
 	default:
-		return nil, fmt.Errorf("unknown model provider: %q (supported: oracle)", cfg.ModelProvider)
+		return nil, fmt.Errorf("unknown model provider: %q (supported: oracle, openrouter)", cfg.ModelProvider)
 	}
 }
 
