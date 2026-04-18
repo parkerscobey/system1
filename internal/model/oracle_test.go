@@ -340,7 +340,7 @@ func TestCreatePromptFile(t *testing.T) {
 		}
 
 		// Clean up
-		defer os.Remove(file)
+		defer func() { _ = os.Remove(file) }()
 
 		// Check file contents
 		content, err := os.ReadFile(file)

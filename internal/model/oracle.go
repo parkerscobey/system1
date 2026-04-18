@@ -99,7 +99,7 @@ func (p *OracleProvider) Complete(ctx context.Context, prompt string, systemProm
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to create prompt file: %w", err)
 	}
-	defer os.Remove(tempFile)
+	defer func() { _ = os.Remove(tempFile) }()
 
 	// Build oracle command
 	args := []string{"-p", prompt}

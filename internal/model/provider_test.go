@@ -259,12 +259,12 @@ func TestMockProvider(t *testing.T) {
 			t.Errorf("Initial CallCount() = %d, expected 0", provider.CallCount())
 		}
 
-		provider.Complete(ctx, "prompt 1", "")
+		_, _ = provider.Complete(ctx, "prompt 1", "")
 		if provider.CallCount() != 1 {
 			t.Errorf("CallCount() after first call = %d, expected 1", provider.CallCount())
 		}
 
-		provider.Complete(ctx, "prompt 2", "")
+		_, _ = provider.Complete(ctx, "prompt 2", "")
 		if provider.CallCount() != 2 {
 			t.Errorf("CallCount() after second call = %d, expected 2", provider.CallCount())
 		}
