@@ -11,11 +11,14 @@ This project is still in early scaffold/MVP phase.
 - do not collapse the generic artifact model into hardcoded long-term limitations
 - preserve MCP-first Introspection as the primary interface
 - favor explicitness over framework magic
+- respect the 8 canonical invariants in `SPEC_TRACEABILITY.md` — use them by number in PR checklists
 
 ## Before opening a PR
 
 - make sure the change maps clearly to an active Forge ticket
 - reference the relevant System-1 spec query keys in your PR description
+- use only canonical keys from the 19-chunk System-1 spec set
+- fill out the PR template completely, especially spec chunks, invariants touched, drift check, and testing
 - keep the implementation narrow if the ticket is MVP-scoped
 
 More detailed contribution guidance will be added as the repository matures.
