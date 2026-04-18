@@ -37,10 +37,15 @@ type OpenRouterProvider struct {
 }
 
 type openRouterChatCompletionRequest struct {
-	Model       string              `json:"model"`
-	Messages    []openRouterMessage `json:"messages"`
-	Temperature float64             `json:"temperature"`
-	MaxTokens   int                 `json:"max_tokens"`
+	Model            string                   `json:"model"`
+	Messages         []openRouterMessage      `json:"messages"`
+	Temperature      float64                  `json:"temperature"`
+	MaxTokens        int                      `json:"max_tokens"`
+	StructuredOutput *openRouterStructuredOutput `json:"structured_output,omitempty"`
+}
+
+type openRouterStructuredOutput struct {
+	JSON json.RawMessage `json:"json,omitempty"`
 }
 
 type openRouterMessage struct {
@@ -142,13 +147,18 @@ func (p *OpenRouterProvider) Complete(ctx context.Context, prompt string, system
 		return Response{}, fmt.Errorf("openrouter model is required")
 	}
 
+	if err := validateStructuredOutputOptions(options); err != nil {
+		return Response{}, err
+	}
+
 	messages := buildOpenRouterMessages(prompt, systemPrompt, options)
 
 	requestPayload := openRouterChatCompletionRequest{
-		Model:       modelName,
-		Messages:    messages,
-		Temperature: options.temperature,
-		MaxTokens:   options.maxTokens,
+		Model:            modelName,
+		Messages:         messages,
+		Temperature:      options.temperature,
+		MaxTokens:        options.maxTokens,
+		StructuredOutput: buildStructuredOutput(options),
 	}
 
 	payload, err := json.Marshal(requestPayload)
@@ -241,7 +251,7 @@ func buildOpenRouterMessages(prompt string, systemPrompt string, options options
 	if options.structured {
 		instruction := "Respond with valid JSON only. Output a single JSON value with no markdown, code fences, or explanatory text."
 		if options.jsonSchema != "" {
-			instruction += " The JSON must conform to this schema: " + options.jsonSchema
+			instruction += " The JSON must conform to the provided schema."
 		}
 		if systemContent == "" {
 			systemContent = instruction
@@ -324,4 +334,34 @@ func formatOpenRouterHTTPError(statusCode int, body []byte) string {
 	}
 
 	return fmt.Sprintf("openrouter request failed with status %d: %s", statusCode, message)
+}
+
+func validateStructuredOutputOptions(opts options) error {
+	if opts.jsonSchema == "" {
+		return nil
+	}
+	if !opts.structured {
+		return fmt.Errorf("json schema requires structured output to be enabled")
+	}
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(opts.jsonSchema), &schema); err != nil {
+		return fmt.Errorf("invalid json schema: %w", err)
+	}
+	if _, ok := schema["type"]; !ok {
+		return fmt.Errorf("json schema must have a type field")
+	}
+	return nil
+}
+
+func buildStructuredOutput(opts options) *openRouterStructuredOutput {
+	if !opts.structured {
+		return nil
+	}
+	var schemaJSON json.RawMessage
+	if opts.jsonSchema != "" {
+		schemaJSON = json.RawMessage(opts.jsonSchema)
+	}
+	return &openRouterStructuredOutput{
+		JSON: schemaJSON,
+	}
 }
