@@ -327,8 +327,9 @@ func TestBuildWakingMindPromptTruncatesLongBodies(t *testing.T) {
 	prompt := buildWakingMindPrompt(testArtifacts)
 
 	// Body should be truncated to 300 chars + "..."
-	if strings.Count(prompt, "x") > 303 {
-		t.Error("expected body to be truncated to ~300 chars")
+	xCount := strings.Count(prompt, "x")
+	if xCount < 299 || xCount > 301 {
+		t.Errorf("expected body truncated to ~300 x chars, got %d", xCount)
 	}
 	if !strings.Contains(prompt, "...") {
 		t.Error("expected truncation indicator")

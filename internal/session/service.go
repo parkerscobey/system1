@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -27,6 +28,7 @@ type Service struct {
 	logger   *slog.Logger
 	cfg      config.Config
 	backend  backend.Backend
+	mu       sync.RWMutex
 	provider model.Provider
 }
 
@@ -42,6 +44,8 @@ func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend)
 // SetModelProvider sets the model provider for Waking Mind generation.
 // When set, this provider will be used to generate orientation framing instead of snippet concatenation.
 func (s *Service) SetModelProvider(provider model.Provider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.provider = provider
 }
 
@@ -127,8 +131,12 @@ func (s *Service) generateWakingMind(ctx context.Context, artifacts []artifacts.
 	}
 
 	// Try model-driven generation if provider is available
-	if s.provider != nil {
-		mind, err := s.generateWakingMindWithModel(ctx, artifacts)
+	s.mu.RLock()
+	provider := s.provider
+	s.mu.RUnlock()
+
+	if provider != nil {
+		mind, err := s.generateWakingMindWithModel(ctx, artifacts, provider)
 		if err == nil && mind != "" {
 			s.logger.Debug("model waking mind generation succeeded",
 				slog.Int("artifacts", len(artifacts)),
@@ -146,7 +154,7 @@ func (s *Service) generateWakingMind(ctx context.Context, artifacts []artifacts.
 	return s.generateWakingMindHeuristic(artifacts)
 }
 
-func (s *Service) generateWakingMindWithModel(parentCtx context.Context, artifacts []artifacts.PersistedArtifact) (string, error) {
+func (s *Service) generateWakingMindWithModel(parentCtx context.Context, artifacts []artifacts.PersistedArtifact, provider model.Provider) (string, error) {
 	timeout := s.cfg.ModelTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -157,7 +165,7 @@ func (s *Service) generateWakingMindWithModel(parentCtx context.Context, artifac
 	prompt := buildWakingMindPrompt(artifacts)
 	systemPrompt := wakingMindSystemPrompt
 
-	response, err := s.provider.Complete(ctx, prompt, systemPrompt,
+	response, err := provider.Complete(ctx, prompt, systemPrompt,
 		model.WithMaxTokens(maxWakingMindTokens),
 		model.WithTemperature(0.7))
 	if err != nil {
