@@ -84,9 +84,8 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
 ### Main drift
 
 1. **Forge query-key drift**
-   - some tickets reference non-canonical keys like `system-1-mvp-definition`
-   - some reference keys not in the 19-chunk set like `system-1-introspection-concept`
-   - some still use older pre-canonical keys like `hizal-subconscious-devspec-04`
+   - tickets cited non-canonical keys from the old pre-canonical set
+   - normalized during first audit pass, script check-spec-keys.sh now catches regressions
 
 2. **Scaffold behavior is starting to masquerade as spec behavior**
    - session lifecycle is shallow in several places
@@ -163,20 +162,7 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
 
 ## Forge drift found already
 
-This was true during the first audit pass. Forge ticket references have now been normalized to the canonical 19 chunk keys, and SYS1-27 was added to carry ongoing drift control.
-
-### Non-canonical or stale keys seen in Forge
-
-- `system-1-mvp-definition`
-- `system-1-introspection-concept`
-- `hizal-subconscious-devspec-04`
-- `hizal-subconscious-devspec-05`
-- `hizal_daemon_memory_architecture_discussion_apr10`
-- `winnow-product-vision`
-
-### Why this matters
-
-If tickets cite stale keys, future agents will retrieve the wrong context or miss the authoritative chunk entirely. That means drift is now happening in the planning layer, not just the code layer.
+During the first audit pass, Forge tickets contained stale and non-canonical spec key references. These have been normalized to the canonical 19 chunk keys, and SYS1-27 was added to carry ongoing drift control. The check-spec-keys.sh script now catches any regression.
 
 ## Recommended process change
 
