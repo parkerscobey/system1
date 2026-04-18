@@ -58,7 +58,7 @@ func New() (*App, error) {
 	// Initialize model provider if configured
 	var provider model.Provider
 	if cfg.ModelProvider != "" && cfg.ModelProvider != "none" {
-		provider, err = initModelProvider(cfg, logger)
+		provider, err = model.NewProvider(cfg, logger)
 		if err != nil {
 			return nil, fmt.Errorf("init model provider %q: %w", cfg.ModelProvider, err)
 		}
@@ -97,20 +97,6 @@ func New() (*App, error) {
 		DecisionLog:        decisionLog,
 		IntrospectionTrace: introspectionTrace,
 	}, nil
-}
-
-func initModelProvider(cfg config.Config, logger *slog.Logger) (model.Provider, error) {
-	switch cfg.ModelProvider {
-	case "oracle":
-		return model.NewOracleProvider(model.OracleConfig{
-			Engine:  cfg.OracleEngine,
-			Model:   cfg.OracleModel,
-			Timeout: cfg.ModelTimeout,
-			Logger:  logger,
-		}), nil
-	default:
-		return nil, fmt.Errorf("unknown model provider: %q (supported: oracle)", cfg.ModelProvider)
-	}
 }
 
 func (a *App) Run(ctx context.Context) error {

@@ -53,11 +53,13 @@ type Option interface {
 }
 
 type options struct {
-	structured  bool
-	model       string
-	temperature float64
-	maxTokens   int
-	jsonSchema  string
+	structured     bool
+	model          string
+	temperature    float64
+	temperatureSet bool
+	maxTokens      int
+	maxTokensSet   bool
+	jsonSchema     string
 }
 
 type optionFunc func(*options)
@@ -85,6 +87,7 @@ func WithModel(model string) Option {
 func WithTemperature(temp float64) Option {
 	return optionFunc(func(o *options) {
 		o.temperature = temp
+		o.temperatureSet = true
 	})
 }
 
@@ -92,6 +95,7 @@ func WithTemperature(temp float64) Option {
 func WithMaxTokens(tokens int) Option {
 	return optionFunc(func(o *options) {
 		o.maxTokens = tokens
+		o.maxTokensSet = true
 	})
 }
 

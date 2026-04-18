@@ -177,12 +177,13 @@ func (p *OracleProvider) Complete(ctx context.Context, prompt string, systemProm
 
 // stripOracleBanner removes the oracle CLI banner and prompt echo from output.
 // Oracle output format:
-//   🧿 oracle 0.8.5 — <tagline>.
-//   Reattach via: oracle session <slug>
-//   Prompt:
-//   <prompt echo>
-//   ---
-//   <actual response>
+//
+//	🧿 oracle 0.8.5 — <tagline>.
+//	Reattach via: oracle session <slug>
+//	Prompt:
+//	<prompt echo>
+//	---
+//	<actual response>
 func stripOracleBanner(output string) string {
 	// If output doesn't start with the oracle banner, return as-is
 	if !strings.HasPrefix(output, "🧿") {

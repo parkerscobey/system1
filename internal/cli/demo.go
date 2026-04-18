@@ -135,12 +135,11 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 	// Initialize model provider if configured
 	var provider model.Provider
 	if cfg.ModelProvider != "" && cfg.ModelProvider != "none" {
-		provider = model.NewOracleProvider(model.OracleConfig{
-			Engine:  cfg.OracleEngine,
-			Model:   cfg.OracleModel,
-			Timeout: cfg.ModelTimeout,
-			Logger:  logger,
-		})
+		var err error
+		provider, err = model.NewProvider(cfg, logger)
+		if err != nil {
+			return fmt.Errorf("init model provider %q: %w", cfg.ModelProvider, err)
+		}
 		extractSvc = extractSvc.WithModelProvider(provider)
 		logger.Info("model provider initialized", "provider", provider.Name())
 	}
@@ -253,9 +252,14 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 
 	logger.Info("  -> Ambient context loaded", "items", len(sessionResult.AmbientContext))
 	logger.Info("  -> Waking Mind generated", "length", len(sessionResult.WakingMind))
+	logger.Info("  -> Provider used", "provider", providerName(provider))
 
 	if verbose {
-		logger.Debug("waking_mind", "content", sessionResult.WakingMind)
+		logger.Info("  -> Waking Mind content", "content", sessionResult.WakingMind)
+		logger.Info("ambient_context", "artifact_ids", formatAmbientForLog(sessionResult.AmbientContext))
+		fmt.Println("\n=== WAKING MIND ===")
+		fmt.Println(sessionResult.WakingMind)
+		fmt.Println("=== END ===")
 	}
 
 	logger.Info("Step 6: Introspect queries (grounded recall verification)")
@@ -277,7 +281,12 @@ func runDemo(ctx context.Context, fixturesDir, stateDir string, verbose, clean b
 			continue
 		}
 		logger.Info("  query: " + q)
-		logger.Info("  answer:", "text", truncate(result.Answer, 200))
+		if verbose {
+			logger.Info("  answer:", "text", result.Answer)
+			fmt.Printf("\n--- ANSWER to: %s ---\n%s\n--- END ---\n", q, result.Answer)
+		} else {
+			logger.Info("  answer length", "chars", len(result.Answer))
+		}
 
 		if verbose && result.DebugIncluded {
 			logger.Debug("  refs", "artifact_refs", result.ArtifactRefs)
@@ -520,9 +529,25 @@ func createDemoSessionLog(dir string) error {
 	return nil
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+func providerName(p model.Provider) string {
+	if p == nil {
+		return "none"
 	}
-	return s[:maxLen] + "..."
+	return p.Name()
+}
+
+func formatAmbientForLog(artifactIDs []string) string {
+	if len(artifactIDs) == 0 {
+		return "[]"
+	}
+	var b strings.Builder
+	b.WriteString("[")
+	for i, id := range artifactIDs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%q", id)
+	}
+	b.WriteString("]")
+	return b.String()
 }
