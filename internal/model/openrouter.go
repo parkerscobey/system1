@@ -37,10 +37,10 @@ type OpenRouterProvider struct {
 }
 
 type openRouterChatCompletionRequest struct {
-	Model            string                   `json:"model"`
-	Messages         []openRouterMessage      `json:"messages"`
-	Temperature      float64                  `json:"temperature"`
-	MaxTokens        int                      `json:"max_tokens"`
+	Model            string                      `json:"model"`
+	Messages         []openRouterMessage         `json:"messages"`
+	Temperature      float64                     `json:"temperature"`
+	MaxTokens        int                         `json:"max_tokens"`
 	StructuredOutput *openRouterStructuredOutput `json:"structured_output,omitempty"`
 }
 
@@ -223,12 +223,9 @@ func (p *OpenRouterProvider) Complete(ctx context.Context, prompt string, system
 	if options.structured {
 		var structured json.RawMessage
 		if err := json.Unmarshal([]byte(responseText), &structured); err != nil {
-			p.logger.WarnContext(ctx, "failed to parse structured openrouter response",
-				slog.String("error", err.Error()),
-				slog.String("response", responseText))
-		} else {
-			response.Structured = structured
+			return Response{}, fmt.Errorf("failed to parse structured openrouter response: %w", err)
 		}
+		response.Structured = structured
 	}
 
 	return response, nil
