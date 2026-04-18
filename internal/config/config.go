@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -20,6 +22,12 @@ type Config struct {
 	UseMCPServer    bool
 	BackendType     string
 	HizalProjectID  string
+
+	// Model provider configuration
+	ModelProvider string        // default: "none"
+	OracleEngine  string        // default: "api"
+	OracleModel   string        // default: empty (uses oracle default)
+	ModelTimeout  time.Duration // default: 30 seconds
 }
 
 func Load() (Config, error) {
@@ -39,6 +47,12 @@ func Load() (Config, error) {
 		UseMCPServer:    true,
 		BackendType:     envOr("SYSTEM1_BACKEND_TYPE", "file"),
 		HizalProjectID:  envOr("SYSTEM1_HIZAL_PROJECT_ID", ""),
+
+		// Model provider configuration
+		ModelProvider: envOr("SYSTEM1_MODEL_PROVIDER", "none"),
+		OracleEngine:  envOr("SYSTEM1_ORACLE_ENGINE", "api"),
+		OracleModel:   envOr("SYSTEM1_ORACLE_MODEL", ""),
+		ModelTimeout:  envDuration("SYSTEM1_MODEL_TIMEOUT", 30*time.Second),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -91,6 +105,25 @@ func envCSV(key string, fallback []string) []string {
 		return fallback
 	}
 	return out
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+
+	// Try parsing as seconds first (integer)
+	if seconds, err := strconv.Atoi(v); err == nil {
+		return time.Duration(seconds) * time.Second
+	}
+
+	// Try parsing as duration string
+	if duration, err := time.ParseDuration(v); err == nil {
+		return duration
+	}
+
+	return fallback
 }
 
 func userHomeDir() string {
