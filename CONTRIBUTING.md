@@ -20,5 +20,6 @@ This project is still in early scaffold/MVP phase.
 - use only canonical keys from the 19-chunk System-1 spec set
 - fill out the PR template completely, especially spec chunks, invariants touched, drift check, and testing
 - keep the implementation narrow if the ticket is MVP-scoped
+- run `./scripts/check-spec-keys.sh` and make sure it passes
 
 More detailed contribution guidance will be added as the repository matures.

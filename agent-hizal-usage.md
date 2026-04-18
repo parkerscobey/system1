@@ -62,7 +62,7 @@ Common cases:
 Examples:
 
 ```txt
-read_context(project_id="$HIZAL_PROJECT_ID", query_key="system-1-mvp-definition")
+read_context(project_id="$HIZAL_PROJECT_ID", query_key="system-1-problems")
 read_context(id="<chunk-id>")
 ```
 
