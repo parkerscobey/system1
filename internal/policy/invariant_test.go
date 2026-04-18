@@ -36,10 +36,82 @@ func TestCandidateWithoutEvidenceIsRejected(t *testing.T) {
 	}
 }
 
-// NOTE: known gap. validateStructure checks len(EvidenceSnippets)==0
-// but does not filter individual empty strings. An empty string in
-// EvidenceSnippets currently passes validation.
-// TODO: tighten validateStructure to reject empty evidence strings.
+// Invariant 4: empty evidence strings must be rejected at validation.
+
+func TestCandidateWithEmptyEvidenceStringIsRejected(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY"}}, nil)
+
+	candidate := artifacts.CandidateArtifact{
+		CandidateID:   "cand-empty-evidence",
+		ArtifactType:  "MEMORY",
+		ProposedScope: "AGENT",
+		Title:         "Something",
+		Body:          "The codebase is organized.",
+		Confidence:    artifacts.ConfidenceHigh,
+		Provenance: artifacts.Provenance{
+			EvidenceSnippets: []string{""},
+		},
+	}
+
+	result, err := svc.Evaluate(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.Status == artifacts.StatusApproved {
+		t.Fatalf("invariant 4 violation: candidate with empty evidence string must not be approved, got %s", result.Status)
+	}
+}
+
+func TestCandidateWithWhitespaceEvidenceStringIsRejected(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY"}}, nil)
+
+	candidate := artifacts.CandidateArtifact{
+		CandidateID:   "cand-whitespace",
+		ArtifactType:  "MEMORY",
+		ProposedScope: "AGENT",
+		Title:         "Something",
+		Body:          "The codebase is organized.",
+		Confidence:    artifacts.ConfidenceHigh,
+		Provenance: artifacts.Provenance{
+			EvidenceSnippets: []string{"  \t\n  "},
+		},
+	}
+
+	result, err := svc.Evaluate(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.Status == artifacts.StatusApproved {
+		t.Fatalf("invariant 4 violation: candidate with whitespace-only evidence must not be approved, got %s", result.Status)
+	}
+}
+
+func TestCandidateWithMixedGoodAndEmptyEvidenceIsRejected(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY"}}, nil)
+
+	candidate := artifacts.CandidateArtifact{
+		CandidateID:   "cand-mixed",
+		ArtifactType:  "MEMORY",
+		ProposedScope: "AGENT",
+		Title:         "Something",
+		Body:          "The codebase is organized.",
+		Confidence:    artifacts.ConfidenceHigh,
+		Provenance: artifacts.Provenance{
+			EvidenceSnippets: []string{"good evidence", ""},
+		},
+	}
+
+	result, err := svc.Evaluate(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if result.Status == artifacts.StatusApproved {
+		t.Fatalf("invariant 4 violation: candidate with any empty evidence snippet must not be approved, got %s", result.Status)
+	}
+}
 
 func TestCandidateWithEvidenceIsApproved(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

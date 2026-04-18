@@ -241,6 +241,11 @@ func (s *Service) validateStructure(ctx context.Context, candidate artifacts.Can
 	if len(candidate.Provenance.EvidenceSnippets) == 0 {
 		return fmt.Errorf("provenance evidence required")
 	}
+	for i, s := range candidate.Provenance.EvidenceSnippets {
+		if strings.TrimSpace(s) == "" {
+			return fmt.Errorf("provenance evidence snippet %d is empty", i)
+		}
+	}
 
 	return nil
 }

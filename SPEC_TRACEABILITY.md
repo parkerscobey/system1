@@ -62,14 +62,14 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
 
 | Invariant | Tests | Package |
 |---|---|---|
-| 1 — supportive, not sovereign | no automated test yet | — |
+| 1 — supportive, not sovereign | `TestExtractionOnlyProposesNeverApproves` | `extract` |
 | 2 — attributable, not mysterious | `TestApprovedCandidateRetainsProvenance` | `policy` |
 | 3 — isolated, not leaky | no automated test yet (single-agent MVP) | — |
-| 4 — grounded in source evidence | `TestCandidateWithoutEvidenceIsRejected`, `TestCandidateWithEvidenceIsApproved`, `TestCandidateProvenanceCarriesEvidenceSnippets`, `TestCandidateProvenanceReferencesOrigin`, `TestCandidateTitleAndBodyAreResolvedContent`, `TestQueryDebugModeIncludesProvenance` | `policy`, `extract`, `introspect` |
-| 5 — resilient under failure | `TestSessionStartDegradesGracefullyOnPartialBackendFailure`, `TestSessionStartHandlesEmptyBackend`, `TestLoadAmbientSnapshotMissingDir`, `TestLoadAmbientSnapshotCorruptFile`, `TestStore_Search_CorruptChunkReturnsError`, `TestStore_Get_CorruptChunkReturnsError` | `session`, `backend/hizal` |
+| 4 — grounded in source evidence | `TestCandidateWithoutEvidenceIsRejected`, `TestCandidateWithEmptyEvidenceStringIsRejected`, `TestCandidateWithWhitespaceEvidenceStringIsRejected`, `TestCandidateWithMixedGoodAndEmptyEvidenceIsRejected`, `TestCandidateWithEvidenceIsApproved`, `TestCandidateProvenanceCarriesEvidenceSnippets`, `TestCandidateProvenanceReferencesOrigin`, `TestCandidateTitleAndBodyAreResolvedContent`, `TestQueryDebugModeIncludesProvenance`, `TestSessionStartPersistsAmbientSnapshot` | `policy`, `extract`, `introspect`, `session` |
+| 5 — resilient under failure | `TestSessionStartDegradesGracefullyOnPartialBackendFailure`, `TestSessionStartHandlesEmptyBackend`, `TestLoadAmbientSnapshotMissingDir`, `TestLoadAmbientSnapshotCorruptFile`, `TestSessionEndWithoutStartIsNoOp`, `TestStore_Search_CorruptChunkReturnsError`, `TestStore_Get_CorruptChunkReturnsError` | `session`, `backend/hizal` |
 | 6 — simpler for the conscious agent | no automated test yet | — |
 | 7 — multi-agent compatible | no automated test yet (single-agent MVP) | — |
-| 8 — bounded intelligence | `TestExtractionAbstainsOnLowSignalContent`, `TestExtractionAbstainsOnNoRefs`, `TestExtractionAbstainsOnUnreadableRef` | `extract` |
+| 8 — bounded intelligence | `TestExtractionAbstainsOnLowSignalContent`, `TestExtractionAbstainsOnNoRefs`, `TestExtractionAbstainsOnUnreadableRef`, `TestExtractionRejectsUnregisteredTypes` | `extract` |
 
 ## Current audit summary
 

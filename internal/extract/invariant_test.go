@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/XferOps/system1/internal/artifacts"
@@ -23,7 +22,6 @@ func TestCandidateProvenanceCarriesEvidenceSnippets(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "session.jsonl")
 
-	// Need MEMORY keywords: "remember", "preferred", "like to", "don't like", etc. Need 2+.
 	line := `{"event_id":"evt_1","source_id":"agent","session_id":"sess","timestamp":"2026-04-15T10:00:01Z","event_type":"message","actor_type":"user","content":"I prefer using WebSockets for real-time data. I like when messages arrive instantly, and don't like when there's latency."}` + "\n"
 	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
 		t.Fatalf("write session log: %v", err)
@@ -204,5 +202,58 @@ func TestCandidateTitleAndBodyAreResolvedContent(t *testing.T) {
 	if c.Body == "" {
 		t.Fatalf("invariant 4 violation: candidate body must not be empty")
 	}
-	_ = strings.Trim
+}
+
+// Invariant 1: "supportive, not sovereign"
+// Extraction must only propose candidates, never approve them autonomously.
+
+func TestExtractionOnlyProposesNeverApproves(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "session.jsonl")
+
+	line := `{"event_id":"evt_1","source_id":"agent","session_id":"sess","timestamp":"2026-04-15T10:00:01Z","event_type":"message","actor_type":"user","content":"I prefer clear APIs. I like when errors are well documented."}` + "\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write session log: %v", err)
+	}
+
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY", "KNOWLEDGE"}})
+	span := artifacts.EventSpan{
+		SpanID:   "span_1",
+		EventIDs: []string{"evt_1"},
+		RawRefs:  []string{logPath + ":0"},
+	}
+
+	candidates, err := svc.Extract(ctx, span)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	for _, c := range candidates {
+		if c.Status != artifacts.StatusProposed {
+			t.Fatalf("invariant 1 violation: extraction must only propose, got status %s", c.Status)
+		}
+	}
+}
+
+// Invariant 8: "bounded intelligence"
+// Extraction must not produce candidates for types not in the enabled registry.
+
+func TestExtractionRejectsUnregisteredTypes(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY"}})
+
+	if !svc.isValidType("MEMORY") {
+		t.Fatal("MEMORY should be valid")
+	}
+	if svc.isValidType("KNOWLEDGE") {
+		t.Fatal("invariant 8 violation: KNOWLEDGE should not be valid when only MEMORY is enabled")
+	}
+	if svc.isValidType("DECISION") {
+		t.Fatal("invariant 8 violation: DECISION should not be valid when only MEMORY is enabled")
+	}
+	if svc.isValidType("") {
+		t.Fatal("invariant 8 violation: empty type should never be valid")
+	}
 }

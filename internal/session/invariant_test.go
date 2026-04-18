@@ -14,7 +14,6 @@ import (
 	"github.com/XferOps/system1/internal/config"
 )
 
-// testBackend is a minimal Backend implementation for invariant testing.
 type testBackend struct {
 	artifacts []artifacts.PersistedArtifact
 	err       error
@@ -102,8 +101,7 @@ func (b *testBackend) TypeRegistry(_ context.Context) ([]string, error) {
 func (b *testBackend) Close() error              { return nil }
 func (b *testBackend) Type() backend.BackendType { return backend.BackendType("test") }
 
-// Test: backend returning artifacts should still produce a result,
-// not crash the session start.
+// Invariant 5: "failures must degrade, not destroy"
 
 func TestSessionStartDegradesGracefullyOnPartialBackendFailure(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -115,23 +113,17 @@ func TestSessionStartDegradesGracefullyOnPartialBackendFailure(t *testing.T) {
 		},
 	}
 
-	cfg := config.Config{
-		StateDir:     tmpDir,
-		EnabledTypes: []string{"MEMORY", "KNOWLEDGE"},
-	}
+	cfg := config.Config{StateDir: tmpDir, EnabledTypes: []string{"MEMORY", "KNOWLEDGE"}}
 
 	svc := NewService(logger, cfg, be)
 	result, err := svc.Start(context.Background())
 	if err != nil {
 		t.Fatalf("invariant 5 violation: session start must not fail on partial backend, got: %v", err)
 	}
-
 	if result.WakingMind == "" {
 		t.Fatalf("invariant 5 violation: session start should produce a Waking Mind even with partial data")
 	}
 }
-
-// Test: session start with completely empty backend must not panic.
 
 func TestSessionStartHandlesEmptyBackend(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -139,23 +131,17 @@ func TestSessionStartHandlesEmptyBackend(t *testing.T) {
 
 	be := &testBackend{artifacts: nil}
 
-	cfg := config.Config{
-		StateDir:     tmpDir,
-		EnabledTypes: []string{"MEMORY", "KNOWLEDGE"},
-	}
+	cfg := config.Config{StateDir: tmpDir, EnabledTypes: []string{"MEMORY", "KNOWLEDGE"}}
 
 	svc := NewService(logger, cfg, be)
 	result, err := svc.Start(context.Background())
 	if err != nil {
 		t.Fatalf("invariant 5 violation: session start must not fail on empty backend, got: %v", err)
 	}
-
 	if result.WakingMind == "" {
-		t.Fatalf("invariant 5 violation: session start must produce a Waking Mind even with no artifacts (e.g. 'No recent context available')")
+		t.Fatalf("invariant 5 violation: session start must produce a Waking Mind even with no artifacts")
 	}
 }
-
-// Test: loadAmbientSnapshot from missing dir returns nil without error.
 
 func TestLoadAmbientSnapshotMissingDir(t *testing.T) {
 	result, err := LoadAmbientSnapshot(filepath.Join(t.TempDir(), "nonexistent"))
@@ -166,8 +152,6 @@ func TestLoadAmbientSnapshotMissingDir(t *testing.T) {
 		t.Fatalf("expected nil ambient snapshot from missing dir, got %v", result)
 	}
 }
-
-// Test: loadAmbientSnapshot from corrupt file must surface error, not panic.
 
 func TestLoadAmbientSnapshotCorruptFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -185,5 +169,49 @@ func TestLoadAmbientSnapshotCorruptFile(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("invariant 5 violation: corrupt ambient snapshot must return nil result, got %v", result)
+	}
+}
+
+func TestSessionEndWithoutStartIsNoOp(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+
+	be := &testBackend{artifacts: nil}
+	cfg := config.Config{StateDir: tmpDir, EnabledTypes: []string{"MEMORY"}}
+
+	svc := NewService(logger, cfg, be)
+	err := svc.End(context.Background())
+	if err != nil {
+		t.Fatalf("invariant 5 violation: End without prior Start must not fail, got: %v", err)
+	}
+}
+
+func TestSessionStartPersistsAmbientSnapshot(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+
+	be := &testBackend{
+		artifacts: []artifacts.PersistedArtifact{
+			{PersistedID: "p1", ArtifactType: "MEMORY", Title: "Test", Body: "body", WrittenAt: time.Now().UTC()},
+		},
+	}
+
+	cfg := config.Config{StateDir: tmpDir, EnabledTypes: []string{"MEMORY"}}
+
+	svc := NewService(logger, cfg, be)
+	_, err := svc.Start(context.Background())
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	snapshot, err := LoadAmbientSnapshot(tmpDir)
+	if err != nil {
+		t.Fatalf("load ambient snapshot: %v", err)
+	}
+	if len(snapshot) != 1 {
+		t.Fatalf("invariant 4 violation: persisted snapshot should contain artifacts, got %d", len(snapshot))
+	}
+	if snapshot[0].PersistedID != "p1" {
+		t.Fatalf("expected persisted_id p1, got %s", snapshot[0].PersistedID)
 	}
 }
