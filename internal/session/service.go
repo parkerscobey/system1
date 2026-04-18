@@ -59,7 +59,7 @@ func (s *Service) Start(ctx context.Context) (StartResult, error) {
 		ambientIDs = append(ambientIDs, a.PersistedID)
 	}
 
-	wakingMind := s.generateWakingMind(ambientArtifacts)
+	wakingMind := s.generateWakingMind(ctx, ambientArtifacts)
 	if err := persistAmbientSnapshot(s.cfg.StateDir, ambientArtifacts); err != nil {
 		s.logger.ErrorContext(ctx, "failed to persist ambient snapshot", "error", err)
 		return StartResult{}, err
@@ -121,33 +121,37 @@ func (s *Service) assembleAmbientContext(ctx context.Context) ([]artifacts.Persi
 	return ambient, nil
 }
 
-func (s *Service) generateWakingMind(artifacts []artifacts.PersistedArtifact) string {
+func (s *Service) generateWakingMind(ctx context.Context, artifacts []artifacts.PersistedArtifact) string {
 	if len(artifacts) == 0 {
 		return "No recent context available. Starting fresh."
 	}
 
 	// Try model-driven generation if provider is available
 	if s.provider != nil {
-		mind, err := s.generateWakingMindWithModel(artifacts)
+		mind, err := s.generateWakingMindWithModel(ctx, artifacts)
 		if err == nil && mind != "" {
 			s.logger.Debug("model waking mind generation succeeded",
 				slog.Int("artifacts", len(artifacts)),
 				slog.Int("mind_length", len(mind)))
 			return mind
 		}
-		s.logger.Warn("model waking mind generation failed, falling back to heuristics",
-			slog.String("error", err.Error()))
+		if err != nil {
+			s.logger.Warn("model waking mind generation failed, falling back to heuristics",
+				slog.String("error", err.Error()))
+		} else {
+			s.logger.Warn("model waking mind generation returned empty, falling back to heuristics")
+		}
 	}
 
 	return s.generateWakingMindHeuristic(artifacts)
 }
 
-func (s *Service) generateWakingMindWithModel(artifacts []artifacts.PersistedArtifact) (string, error) {
+func (s *Service) generateWakingMindWithModel(parentCtx context.Context, artifacts []artifacts.PersistedArtifact) (string, error) {
 	timeout := s.cfg.ModelTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	prompt := buildWakingMindPrompt(artifacts)

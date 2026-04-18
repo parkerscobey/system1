@@ -187,7 +187,7 @@ func TestModelWakingMindNilProviderUsesHeuristics(t *testing.T) {
 	}
 }
 
-func TestModelWakingMindBoundedLength(t *testing.T) {
+func TestModelWakingMindWithManyArtifacts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tmpDir := t.TempDir()
 
@@ -226,8 +226,7 @@ func TestModelWakingMindBoundedLength(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// The model should have been called with WithMaxTokens(500)
-	// Verify the response is used as-is
+	// Verify the model response is used as-is
 	if result.WakingMind != "Concise orientation based on 20 recent artifacts covering various memory types." {
 		t.Fatalf("expected model response to be used verbatim, got %q", result.WakingMind)
 	}
@@ -265,7 +264,7 @@ func TestModelWakingMindEmptyBackendStillProducesOutput(t *testing.T) {
 }
 
 func TestBuildWakingMindPromptIncludesAllContext(t *testing.T) {
-	artifacts := []artifacts.PersistedArtifact{
+	testArtifacts := []artifacts.PersistedArtifact{
 		{
 			PersistedID:  "artifact-1",
 			ArtifactType: "MEMORY",
@@ -288,7 +287,7 @@ func TestBuildWakingMindPromptIncludesAllContext(t *testing.T) {
 		},
 	}
 
-	prompt := buildWakingMindPrompt(artifacts)
+	prompt := buildWakingMindPrompt(testArtifacts)
 
 	if !strings.Contains(prompt, "MEMORY") {
 		t.Error("prompt should contain artifact type")
@@ -315,7 +314,7 @@ func TestBuildWakingMindPromptIncludesAllContext(t *testing.T) {
 
 func TestBuildWakingMindPromptTruncatesLongBodies(t *testing.T) {
 	longBody := strings.Repeat("x", 500)
-	artifacts := []artifacts.PersistedArtifact{
+	testArtifacts := []artifacts.PersistedArtifact{
 		{
 			PersistedID:  "artifact-1",
 			ArtifactType: "MEMORY",
@@ -325,7 +324,7 @@ func TestBuildWakingMindPromptTruncatesLongBodies(t *testing.T) {
 		},
 	}
 
-	prompt := buildWakingMindPrompt(artifacts)
+	prompt := buildWakingMindPrompt(testArtifacts)
 
 	// Body should be truncated to 300 chars + "..."
 	if strings.Count(prompt, "x") > 303 {
@@ -337,7 +336,7 @@ func TestBuildWakingMindPromptTruncatesLongBodies(t *testing.T) {
 }
 
 func TestBuildWakingMindPromptLimitsEvidence(t *testing.T) {
-	artifacts := []artifacts.PersistedArtifact{
+	testArtifacts := []artifacts.PersistedArtifact{
 		{
 			PersistedID:  "artifact-1",
 			ArtifactType: "MEMORY",
@@ -350,7 +349,7 @@ func TestBuildWakingMindPromptLimitsEvidence(t *testing.T) {
 		},
 	}
 
-	prompt := buildWakingMindPrompt(artifacts)
+	prompt := buildWakingMindPrompt(testArtifacts)
 
 	// Should include first 3 evidence snippets
 	if !strings.Contains(prompt, "snippet-alpha") {
