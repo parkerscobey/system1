@@ -32,6 +32,16 @@ type Backend interface {
 	Type() BackendType
 }
 
+type NativeSessionResult struct {
+	SessionID string
+	Artifacts []artifacts.PersistedArtifact
+}
+
+type NativeSessionBackend interface {
+	StartSession(ctx context.Context) (NativeSessionResult, error)
+	EndSession(ctx context.Context) error
+}
+
 type TypeRegistry map[string]struct{}
 
 func NewTypeRegistry(types []string) TypeRegistry {

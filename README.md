@@ -6,7 +6,7 @@ This repo is the Go implementation of the first thin vertical slice:
 
 - single daemon
 - single agent
-- file backend only
+- file backend, plus experimental Hizal backend
 - startup Waking Mind
 - MCP-first Introspection
 
@@ -20,7 +20,7 @@ The immediate goal is to prove the System-1 MVP loop:
 2. build turn-based spans
 3. extract candidate artifacts conservatively
 4. run policy, dedup, and deferral
-5. persist to file backend
+5. persist artifacts to a backend
 6. assemble ambient context + Waking Mind at session start
 7. answer `introspect(...)` queries with grounded recall
 
@@ -97,7 +97,7 @@ Use `--include-resolved` if you intentionally want to re-run prompts from resolv
 The MVP deliberately excludes:
 
 - multi-agent multiplexing (single agent only)
-- Hizal backend integration (file backend only)
+- full Hizal parity, especially surfacing/consolidation semantics and dedicated agent-scoped session ownership
 - dynamic focus-shift-driven ambient refresh (startup-only)
 - rich introspection depth beyond one configurable extra pass
 - setup wizard and runtime reconfiguration

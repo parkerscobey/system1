@@ -3,6 +3,7 @@ package hizal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,12 @@ import (
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/backend"
 )
+
+type failingCaller struct{}
+
+func (failingCaller) Call(_ context.Context, _ string, _ []string) ([]byte, error) {
+	return nil, fmt.Errorf("disabled in test")
+}
 
 func TestStore_NewStore(t *testing.T) {
 	logger := slog.Default()
@@ -45,6 +52,7 @@ func TestStore_SaveAndGet_Success(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-sg", []string{"MEMORY", "KNOWLEDGE"})
 	store.basePath = t.TempDir()
+	store.caller = failingCaller{}
 
 	ctx := context.Background()
 	a := artifacts.PersistedArtifact{
@@ -101,6 +109,7 @@ func TestStore_FindByType(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-findbytype", []string{"MEMORY", "KNOWLEDGE"})
 	store.basePath = t.TempDir()
+	store.caller = failingCaller{}
 	ctx := context.Background()
 
 	a := artifacts.PersistedArtifact{
@@ -135,6 +144,7 @@ func TestStore_Search(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-search", []string{"MEMORY"})
 	store.basePath = t.TempDir()
+	store.caller = failingCaller{}
 	ctx := context.Background()
 
 	a := artifacts.PersistedArtifact{
@@ -166,6 +176,7 @@ func TestStore_Search_CorruptChunkReturnsError(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-search-corrupt", []string{"MEMORY"})
 	store.basePath = t.TempDir()
+	store.caller = failingCaller{}
 	ctx := context.Background()
 
 	dir := filepath.Join(store.basePath, "memory")
@@ -186,6 +197,7 @@ func TestStore_Get_CorruptChunkReturnsError(t *testing.T) {
 	logger := slog.Default()
 	store := NewStore(logger, "test-project-get-corrupt", []string{"MEMORY"})
 	store.basePath = t.TempDir()
+	store.caller = failingCaller{}
 	ctx := context.Background()
 
 	dir := filepath.Join(store.basePath, "memory")
@@ -218,7 +230,7 @@ func TestStore_MappingFunctions(t *testing.T) {
 		{"CONVENTION", "CONVENTION"},
 		{"DECISION", "DECISION"},
 		{"PRINCIPLE", "PRINCIPLE"},
-		{"IDENTITY", "KNOWLEDGE"},
+		{"IDENTITY", "IDENTITY"},
 	}
 
 	for _, tt := range tests {

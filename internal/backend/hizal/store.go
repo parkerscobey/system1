@@ -23,6 +23,7 @@ type Store struct {
 	hizalEndpoint string
 	basePath      string
 	chunks        map[string]artifacts.PersistedArtifact
+	caller        mcpCaller
 	mu            sync.RWMutex
 }
 
@@ -42,6 +43,7 @@ func NewStore(logger *slog.Logger, projectID string, enabledTypes []string) *Sto
 		hizalEndpoint: "hizal",
 		basePath:      bp,
 		chunks:        make(map[string]artifacts.PersistedArtifact),
+		caller:        newCLICaller(),
 	}
 }
 
@@ -53,66 +55,23 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 		return errors.New("persisted_id contains invalid path characters")
 	}
 
-	chunkType := s.mapArtifactTypeToChunk(a.ArtifactType)
-	prov := map[string]any{
-		"source_ids":                a.Provenance.SourceIDs,
-		"session_ids":               a.Provenance.SessionIDs,
-		"span_ids":                  a.Provenance.SpanIDs,
-		"event_ids":                 a.Provenance.EventIDs,
-		"raw_refs":                  a.Provenance.RawRefs,
-		"evidence_snippets":         a.Provenance.EvidenceSnippets,
-		"extraction_model":          a.Provenance.ExtractionModel,
-		"derived_from_artifact_ids": a.Provenance.DerivedFromArtifactIDs,
-	}
-	if !a.Provenance.ExtractionTime.IsZero() {
-		prov["extraction_timestamp"] = a.Provenance.ExtractionTime.Format(time.RFC3339)
-	}
-	chunkData := map[string]any{
-		"artifact_id":   a.PersistedID,
-		"artifact_type": a.ArtifactType,
-		"scope":         a.Scope,
-		"title":         a.Title,
-		"body":          a.Body,
-		"confidence":    a.Confidence,
-		"candidate_id":  a.CandidateID,
-		"backend_type":  a.BackendType,
-		"written_at":    a.WrittenAt.Format(time.RFC3339),
-		"write_status":  a.WriteStatus,
-		"provenance":    prov,
-	}
-
-	content, err := json.Marshal(chunkData)
-	if err != nil {
-		return fmt.Errorf("marshal chunk data: %w", err)
-	}
-
-	// Write to disk: ~/.system1/hizal/<project>/chunks/<type>/<id>.json
-	dir := filepath.Join(s.basePath, strings.ToLower(chunkType))
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create chunk dir: %w", err)
-	}
-	chunkPath := filepath.Join(dir, a.PersistedID+".json")
-	if err := os.WriteFile(chunkPath, content, 0600); err != nil {
-		return fmt.Errorf("write chunk file: %w", err)
-	}
-
-	// Update in-memory index with deep-copied metadata
-	s.mu.Lock()
 	stored := a
-	stored.BackendRef = chunkPath
-	newMeta := make(map[string]any, len(a.BackendMetadata)+3)
-	for k, v := range a.BackendMetadata {
-		newMeta[k] = v
+	if remote, err := s.remoteSave(ctx, a); err == nil {
+		stored = remote
+	} else {
+		s.logger.WarnContext(ctx, "remote hizal write failed, falling back to local mirror", "persisted_id", a.PersistedID, "error", err)
 	}
-	newMeta["store"] = "file"
-	newMeta["chunk_path"] = chunkPath
-	newMeta["chunk_type"] = chunkType
-	stored.BackendMetadata = newMeta
-	s.chunks[a.PersistedID] = stored
-	s.mu.Unlock()
+
+	stored, chunkPath, err := s.writeLocalMirror(stored)
+	if err != nil {
+		return err
+	}
 
 	s.logger.InfoContext(ctx, "hizal chunk persisted",
-		"persisted_id", a.PersistedID, "chunk_type", chunkType, "path", chunkPath)
+		"persisted_id", a.PersistedID,
+		"chunk_type", stored.ArtifactType,
+		"path", chunkPath,
+		"backend_ref", stored.BackendRef)
 
 	return nil
 }
@@ -125,6 +84,20 @@ func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact
 		return a, nil
 	}
 	s.mu.RUnlock()
+
+	if chunk, err := s.readRemoteChunk(ctx, id); err == nil {
+		a := chunk.toArtifact()
+		s.mu.Lock()
+		s.chunks[id] = a
+		s.mu.Unlock()
+		return a, nil
+	}
+	if a, err := s.readRemoteSystem1Artifact(ctx, id); err == nil {
+		s.mu.Lock()
+		s.chunks[id] = a
+		s.mu.Unlock()
+		return a, nil
+	}
 
 	// Load from disk under write lock to prevent duplicate loads
 	s.mu.Lock()
@@ -165,61 +138,63 @@ func (s *Store) FindByType(ctx context.Context, artifactType string) ([]artifact
 	if !s.typeRegistry.Has(artifactType) {
 		return nil, nil
 	}
+	if isInjectedLookupType(artifactType) {
+		if err := s.ensureInjectedCache(ctx); err != nil {
+			s.logger.WarnContext(ctx, "failed to prime injected hizal cache for type lookup", "artifact_type", artifactType, "error", err)
+		}
+	}
 	if err := s.loadTypeFromDisk(artifactType); err != nil {
 		return nil, err
 	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var res []artifacts.PersistedArtifact
-	for _, a := range s.chunks {
-		if a.ArtifactType == artifactType {
-			res = append(res, a)
-		}
-	}
-	return res, nil
+	return s.filterCached(func(a artifacts.PersistedArtifact) bool {
+		return a.ArtifactType == artifactType
+	}), nil
 }
 
 func (s *Store) FindByScope(ctx context.Context, scope artifacts.ArtifactScope) ([]artifacts.PersistedArtifact, error) {
+	if isInjectedScope(scope) {
+		if err := s.ensureInjectedCache(ctx); err != nil {
+			s.logger.WarnContext(ctx, "failed to prime injected hizal cache for scope lookup", "scope", scope, "error", err)
+		}
+	}
 	if err := s.loadAllFromDisk(); err != nil {
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var res []artifacts.PersistedArtifact
 	scopeStr := string(scope)
-	for _, a := range s.chunks {
-		if a.Scope == scopeStr {
-			res = append(res, a)
-		}
-	}
-	return res, nil
+	return s.filterCached(func(a artifacts.PersistedArtifact) bool {
+		return a.Scope == scopeStr
+	}), nil
 }
 
 func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]artifacts.PersistedArtifact, error) {
+	if err := s.ensureInjectedCache(ctx); err != nil {
+		s.logger.WarnContext(ctx, "failed to prime injected hizal cache for bounded lookup", "error", err)
+	}
 	if err := s.loadAllFromDisk(); err != nil {
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var res []artifacts.PersistedArtifact
-	for _, a := range s.chunks {
+	return s.filterCached(func(a artifacts.PersistedArtifact) bool {
 		// Half-open interval [since, until)
-		if !a.WrittenAt.Before(since) && a.WrittenAt.Before(until) {
-			res = append(res, a)
-		}
-	}
-	return res, nil
+		return !a.WrittenAt.Before(since) && a.WrittenAt.Before(until)
+	}), nil
 }
 
 func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifacts.PersistedArtifact, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	if query == "" {
+	if strings.TrimSpace(query) == "" {
 		return nil, nil
+	}
+
+	results, err := s.remoteSearch(ctx, query, limit)
+	if err == nil && len(results) > 0 {
+		return results, nil
+	}
+	if err != nil {
+		s.logger.WarnContext(ctx, "remote hizal search failed, falling back to local mirror", "error", err)
 	}
 	if err := s.loadAllFromDisk(); err != nil {
 		return nil, err
@@ -228,16 +203,16 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifact
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	q := strings.ToLower(query)
-	var results []artifacts.PersistedArtifact
+	var local []artifacts.PersistedArtifact
 	for _, a := range s.chunks {
 		if strings.Contains(strings.ToLower(a.Title), q) || strings.Contains(strings.ToLower(a.Body), q) {
-			results = append(results, a)
-			if len(results) >= limit {
+			local = append(local, a)
+			if len(local) >= limit {
 				break
 			}
 		}
 	}
-	return results, nil
+	return local, nil
 }
 
 func (s *Store) TypeRegistry(ctx context.Context) ([]string, error) {
@@ -261,6 +236,96 @@ func (s *Store) Close() error {
 
 func (s *Store) Type() backend.BackendType {
 	return backend.BackendTypeHizal
+}
+
+func (s *Store) ensureInjectedCache(ctx context.Context) error {
+	result, err := s.StartSession(ctx)
+	if err != nil {
+		return err
+	}
+	if len(result.Artifacts) == 0 {
+		return nil
+	}
+	return nil
+}
+
+func (s *Store) filterCached(fn func(artifacts.PersistedArtifact) bool) []artifacts.PersistedArtifact {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var res []artifacts.PersistedArtifact
+	for _, a := range s.chunks {
+		if fn(a) {
+			res = append(res, a)
+		}
+	}
+	return res
+}
+
+func (s *Store) writeLocalMirror(a artifacts.PersistedArtifact) (artifacts.PersistedArtifact, string, error) {
+	chunkType := s.mapArtifactTypeToChunk(a.ArtifactType)
+	prov := map[string]any{
+		"source_ids":                a.Provenance.SourceIDs,
+		"session_ids":               a.Provenance.SessionIDs,
+		"span_ids":                  a.Provenance.SpanIDs,
+		"event_ids":                 a.Provenance.EventIDs,
+		"raw_refs":                  a.Provenance.RawRefs,
+		"evidence_snippets":         a.Provenance.EvidenceSnippets,
+		"extraction_model":          a.Provenance.ExtractionModel,
+		"derived_from_artifact_ids": a.Provenance.DerivedFromArtifactIDs,
+	}
+	if !a.Provenance.ExtractionTime.IsZero() {
+		prov["extraction_timestamp"] = a.Provenance.ExtractionTime.Format(time.RFC3339)
+	}
+	chunkData := map[string]any{
+		"artifact_id":      a.PersistedID,
+		"artifact_type":    a.ArtifactType,
+		"scope":            a.Scope,
+		"title":            a.Title,
+		"body":             a.Body,
+		"confidence":       a.Confidence,
+		"candidate_id":     a.CandidateID,
+		"backend_type":     a.BackendType,
+		"backend_ref":      a.BackendRef,
+		"backend_metadata": a.BackendMetadata,
+		"written_at":       a.WrittenAt.Format(time.RFC3339),
+		"write_status":     a.WriteStatus,
+		"provenance":       prov,
+	}
+
+	content, err := json.Marshal(chunkData)
+	if err != nil {
+		return artifacts.PersistedArtifact{}, "", fmt.Errorf("marshal chunk data: %w", err)
+	}
+
+	dir := filepath.Join(s.basePath, strings.ToLower(chunkType))
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return artifacts.PersistedArtifact{}, "", fmt.Errorf("create chunk dir: %w", err)
+	}
+	chunkPath := filepath.Join(dir, a.PersistedID+".json")
+	if err := os.WriteFile(chunkPath, content, 0600); err != nil {
+		return artifacts.PersistedArtifact{}, "", fmt.Errorf("write chunk file: %w", err)
+	}
+
+	stored := a
+	meta := cloneMetadata(a.BackendMetadata)
+	meta["chunk_path"] = chunkPath
+	if _, ok := meta["chunk_type"]; !ok {
+		meta["chunk_type"] = chunkType
+	}
+	if _, ok := meta["store"]; !ok {
+		meta["store"] = "file"
+		stored.BackendRef = chunkPath
+	}
+	stored.BackendMetadata = meta
+	if stored.BackendRef == "" {
+		stored.BackendRef = chunkPath
+	}
+
+	s.mu.Lock()
+	s.chunks[a.PersistedID] = stored
+	s.mu.Unlock()
+
+	return stored, chunkPath, nil
 }
 
 // --- Disk helpers ---
@@ -388,13 +453,20 @@ func chunkDataToArtifact(data map[string]any, path string) artifacts.PersistedAr
 			a.WrittenAt = t
 		}
 	}
-	a.BackendRef = path
+	a.BackendRef = jsonStr(data, "backend_ref")
+	if a.BackendRef == "" {
+		a.BackendRef = path
+	}
 	if prov, ok := data["provenance"].(map[string]any); ok {
 		a.Provenance = provenanceFromMap(prov)
 	}
-	a.BackendMetadata = map[string]any{
-		"store":      "file",
-		"chunk_path": path,
+	a.BackendMetadata = jsonMap(data, "backend_metadata")
+	if a.BackendMetadata == nil {
+		a.BackendMetadata = map[string]any{}
+	}
+	a.BackendMetadata["chunk_path"] = path
+	if _, ok := a.BackendMetadata["store"]; !ok {
+		a.BackendMetadata["store"] = "file"
 	}
 	return a
 }
@@ -404,6 +476,14 @@ func jsonStr(data map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+func jsonMap(data map[string]any, key string) map[string]any {
+	v, ok := data[key].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return cloneMetadata(v)
 }
 
 func jsonStrSlice(data map[string]any, key string) []string {
@@ -418,6 +498,17 @@ func jsonStrSlice(data map[string]any, key string) []string {
 		}
 	}
 	return result
+}
+
+func cloneMetadata(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func provenanceFromMap(m map[string]any) artifacts.Provenance {
@@ -439,8 +530,28 @@ func provenanceFromMap(m map[string]any) artifacts.Provenance {
 	return p
 }
 
+func isInjectedLookupType(artifactType string) bool {
+	switch strings.ToUpper(artifactType) {
+	case "IDENTITY", "CONVENTION", "PRINCIPLE":
+		return true
+	default:
+		return false
+	}
+}
+
+func isInjectedScope(scope artifacts.ArtifactScope) bool {
+	switch scope {
+	case artifacts.ScopeAgent, artifacts.ScopeProject, artifacts.ScopeOrg:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Store) mapArtifactTypeToChunk(artifactType string) string {
 	switch artifactType {
+	case "IDENTITY":
+		return "IDENTITY"
 	case "MEMORY":
 		return "MEMORY"
 	case "KNOWLEDGE":
@@ -470,6 +581,8 @@ func (s *Store) mapArtifactTypeToChunk(artifactType string) string {
 
 func (s *Store) mapChunkToArtifactType(chunkType string) string {
 	switch chunkType {
+	case "IDENTITY":
+		return "IDENTITY"
 	case "MEMORY":
 		return "MEMORY"
 	case "KNOWLEDGE":

@@ -190,6 +190,20 @@ func TestGetRecentArtifactsSortsByWrittenAt(t *testing.T) {
 	}
 }
 
+func TestGetTopArtifactsForQueryPrioritizesRelevanceOverRecency(t *testing.T) {
+	artifactsIn := []artifacts.PersistedArtifact{
+		persistedArtifact("recent", "Recent memory", "Parker moved recently", time.Date(2026, 4, 15, 11, 0, 0, 0, time.UTC)),
+		persistedArtifact("identity", "Parker Scobey profile", "Parker Scobey founder profile and family context", time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)),
+	}
+
+	top := getTopArtifactsForQuery("what do I know about Parker Scobey", artifactsIn, 2)
+	got := []string{top[0].PersistedID, top[1].PersistedID}
+	want := []string{"identity", "recent"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected relevance order %v, got %v", want, got)
+	}
+}
+
 func TestExtractTopicsFiltersStopwordsAndSortsDeterministically(t *testing.T) {
 	artifactsIn := []artifacts.PersistedArtifact{
 		persistedArtifact("one", "This roadmap covers alpha planning", "about beta launch and gamma testing", time.Date(2026, 4, 15, 9, 0, 0, 0, time.UTC)),

@@ -217,7 +217,7 @@ func (s *Service) synthesizeResponse(query string, artifacts []artifactslib.Pers
 func (s *Service) synthesizeWithHeuristics(query string, artifacts []artifactslib.PersistedArtifact, debug bool, source string) (Result, error) {
 	var sb strings.Builder
 
-	recent := getRecentArtifacts(artifacts, 5)
+	recent := getTopArtifactsForQuery(query, artifacts, 5)
 
 	if len(recent) == 0 {
 		return Result{Answer: "No relevant artifacts found."}, nil
@@ -418,6 +418,28 @@ func getRecentArtifacts(artifacts []artifactslib.PersistedArtifact, max int) []a
 	return artifacts[:max]
 }
 
+func getTopArtifactsForQuery(query string, artifacts []artifactslib.PersistedArtifact, max int) []artifactslib.PersistedArtifact {
+	artifacts = append([]artifactslib.PersistedArtifact(nil), artifacts...)
+	queryTerms := normalizedTerms(query)
+	if len(queryTerms) == 0 {
+		return getRecentArtifacts(artifacts, max)
+	}
+
+	sort.SliceStable(artifacts, func(i, j int) bool {
+		left := relevanceScore(queryTerms, artifacts[i])
+		right := relevanceScore(queryTerms, artifacts[j])
+		if left != right {
+			return left > right
+		}
+		return artifacts[i].WrittenAt.After(artifacts[j].WrittenAt)
+	})
+
+	if len(artifacts) <= max {
+		return artifacts
+	}
+	return artifacts[:max]
+}
+
 func hasRecentArtifacts(artifacts []artifactslib.PersistedArtifact, within time.Duration) bool {
 	cutoff := time.Now().Add(-within)
 	for _, a := range artifacts {
@@ -482,23 +504,33 @@ func normalizedTerms(text string) []string {
 }
 
 func matchesArtifact(queryTerms []string, artifact artifactslib.PersistedArtifact) bool {
+	return relevanceScore(queryTerms, artifact) > 0
+}
+
+func relevanceScore(queryTerms []string, artifact artifactslib.PersistedArtifact) int {
 	if len(queryTerms) == 0 {
-		return false
+		return 0
 	}
 
-	artifactTerms := make(map[string]bool)
-	for _, word := range normalizedTerms(artifact.Title + " " + artifact.Body) {
-		artifactTerms[word] = true
+	titleTerms := make(map[string]bool)
+	for _, word := range normalizedTerms(artifact.Title) {
+		titleTerms[word] = true
+	}
+	bodyTerms := make(map[string]bool)
+	for _, word := range normalizedTerms(artifact.Body) {
+		bodyTerms[word] = true
 	}
 
-	matches := 0
+	score := 0
 	for _, term := range queryTerms {
-		if artifactTerms[term] {
-			matches++
+		if titleTerms[term] {
+			score += 3
+		}
+		if bodyTerms[term] {
+			score += 1
 		}
 	}
-
-	return matches > 0
+	return score
 }
 
 func collectDebugEvidence(artifacts []artifactslib.PersistedArtifact) ([]string, []string) {

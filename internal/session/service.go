@@ -52,10 +52,29 @@ func (s *Service) SetModelProvider(provider model.Provider) {
 func (s *Service) Start(ctx context.Context) (StartResult, error) {
 	s.logger.InfoContext(ctx, "session start requested")
 
-	ambientArtifacts, err := s.assembleAmbientContext(ctx)
-	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to assemble ambient context", "error", err)
-		return StartResult{}, err
+	var (
+		ambientArtifacts []artifacts.PersistedArtifact
+		err              error
+	)
+
+	if nativeBackend, ok := s.backend.(backend.NativeSessionBackend); ok {
+		nativeResult, nativeErr := nativeBackend.StartSession(ctx)
+		if nativeErr != nil {
+			s.logger.WarnContext(ctx, "native session backend start failed, falling back to local assembly", "error", nativeErr)
+		} else if len(nativeResult.Artifacts) > 0 {
+			ambientArtifacts = nativeResult.Artifacts
+			s.logger.InfoContext(ctx, "using native session backend ambient context",
+				slog.Int("ambient_artifacts", len(ambientArtifacts)),
+				slog.String("session_id", nativeResult.SessionID))
+		}
+	}
+
+	if len(ambientArtifacts) == 0 {
+		ambientArtifacts, err = s.assembleAmbientContext(ctx)
+		if err != nil {
+			s.logger.ErrorContext(ctx, "failed to assemble ambient context", "error", err)
+			return StartResult{}, err
+		}
 	}
 
 	ambientIDs := make([]string, 0, len(ambientArtifacts))
@@ -82,6 +101,12 @@ func (s *Service) Start(ctx context.Context) (StartResult, error) {
 
 func (s *Service) End(ctx context.Context) error {
 	s.logger.InfoContext(ctx, "session end requested")
+
+	if nativeBackend, ok := s.backend.(backend.NativeSessionBackend); ok {
+		if err := nativeBackend.EndSession(ctx); err != nil {
+			return err
+		}
+	}
 
 	s.logger.InfoContext(ctx, "session ended")
 	return nil
