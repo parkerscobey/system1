@@ -429,7 +429,6 @@ func (c hizalChunk) toArtifact() artifacts.PersistedArtifact {
 
 	meta := map[string]any{
 		"store":      "hizal",
-		"chunk_id":   c.ID,
 		"query_key":  c.QueryKey,
 		"chunk_type": artifactType,
 		"scope":      scope,
@@ -439,22 +438,25 @@ func (c hizalChunk) toArtifact() artifacts.PersistedArtifact {
 		meta["related"] = c.Related
 	}
 
-	return artifacts.PersistedArtifact{
-		PersistedID:     c.ID,
+	artifact := artifacts.PersistedArtifact{
 		ArtifactType:    artifactType,
 		Scope:           scope,
 		Title:           c.Title,
 		Body:            c.Content,
 		Confidence:      artifacts.ConfidenceHigh,
 		BackendType:     string(backend.BackendTypeHizal),
-		BackendRef:      hizalRef(c.ID),
 		WrittenAt:       writtenAt,
 		WriteStatus:     "written",
 		BackendMetadata: meta,
-		Provenance: artifacts.Provenance{
-			RawRefs: []string{hizalRef(c.ID)},
-		},
 	}
+	if c.ID != "" {
+		artifact.PersistedID = c.ID
+		artifact.BackendRef = hizalRef(c.ID)
+		artifact.BackendMetadata["chunk_id"] = c.ID
+		artifact.Provenance.RawRefs = append(artifact.Provenance.RawRefs, hizalRef(c.ID))
+	}
+
+	return artifact
 }
 
 func hizalRef(id string) string {
