@@ -98,14 +98,13 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	stats := &IngestStats{}
 	s.lastSpans = nil
 
-	logPath := s.sessionLog
 	if err := s.discoverSessionLogPath(ctx); err != nil {
 		s.logger.WarnContext(ctx, "session log discovery failed", "error", err)
 	}
 	if s.sourceKind == "opencode_sqlite" {
 		return s.ingestOpenCodeSQLite(ctx)
 	}
-	logPath = s.sessionLog
+	logPath := s.sessionLog
 	if _, err := os.Stat(logPath); errors.Is(err, os.ErrNotExist) {
 		s.logger.DebugContext(ctx, "session log does not exist yet", slog.String("path", logPath))
 		return stats, nil
