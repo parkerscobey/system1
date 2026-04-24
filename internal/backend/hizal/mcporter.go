@@ -44,12 +44,18 @@ func (c cliCaller) Call(ctx context.Context, selector string, args []string) ([]
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr := strings.TrimSpace(string(exitErr.Stderr))
 			if stderr != "" {
-				return nil, fmt.Errorf("mcporter call %s failed: %s", selector, stderr)
+				if isNotFoundCLIError(stderr) {
+					return nil, fmt.Errorf("mcporter call %s failed: %w", selector, backend.ErrNotFound)
+				}
 			}
 		}
 		return nil, fmt.Errorf("mcporter call %s failed: %w", selector, err)
 	}
 	return out, nil
+}
+
+func isNotFoundCLIError(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "not found")
 }
 
 type activeSessionResponse struct {
