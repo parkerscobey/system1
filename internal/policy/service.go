@@ -371,6 +371,7 @@ func (s *Service) checkRectificationTarget(ctx context.Context, candidate artifa
 		return false, artifacts.PersistedArtifact{}
 	}
 
+	matches := make([]artifacts.PersistedArtifact, 0)
 	for _, existing := range existingArtifacts {
 		if strings.ToUpper(existing.Scope) != strings.ToUpper(candidate.ProposedScope) {
 			continue
@@ -381,7 +382,11 @@ func (s *Service) checkRectificationTarget(ctx context.Context, candidate artifa
 		if !likelyRectification(existing, candidate) {
 			continue
 		}
-		return true, existing
+		matches = append(matches, existing)
+	}
+
+	if len(matches) == 1 {
+		return true, matches[0]
 	}
 
 	return false, artifacts.PersistedArtifact{}
