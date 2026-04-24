@@ -19,6 +19,7 @@ import (
 type Store struct {
 	logger        *slog.Logger
 	projectID     string
+	skipRemoteEnd bool
 	typeRegistry  backend.TypeRegistry
 	hizalEndpoint string
 	basePath      string
@@ -39,11 +40,22 @@ func NewStore(logger *slog.Logger, projectID string, enabledTypes []string) *Sto
 	return &Store{
 		logger:        logger,
 		projectID:     projectID,
+		skipRemoteEnd: envBool("SYSTEM1_HIZAL_SKIP_END_SESSION"),
 		typeRegistry:  backend.NewTypeRegistry(enabledTypes),
 		hizalEndpoint: "hizal",
 		basePath:      bp,
 		chunks:        make(map[string]artifacts.PersistedArtifact),
 		caller:        newCLICaller(),
+	}
+}
+
+func envBool(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -182,6 +194,12 @@ func (s *Store) FindBounded(ctx context.Context, since, until time.Time) ([]arti
 }
 
 func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifacts.PersistedArtifact, error) {
+	return s.SearchContext(ctx, backend.SearchContextRequest{Query: query, Limit: limit})
+}
+
+func (s *Store) SearchContext(ctx context.Context, req backend.SearchContextRequest) ([]artifacts.PersistedArtifact, error) {
+	query := req.Query
+	limit := req.Limit
 	if limit <= 0 {
 		limit = 20
 	}
@@ -189,13 +207,44 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]artifact
 		return nil, nil
 	}
 
-	results, err := s.remoteSearch(ctx, query, limit)
+	results, err := s.remoteSearchWithOptions(ctx, req)
 	if err == nil && len(results) > 0 {
 		return results, nil
 	}
 	if err != nil {
 		s.logger.WarnContext(ctx, "remote hizal search failed, falling back to local mirror", "error", err)
 	}
+
+	return s.localSearch(query, limit)
+}
+
+func (s *Store) ReadContext(ctx context.Context, id string, queryKey string) (artifacts.PersistedArtifact, error) {
+	if strings.TrimSpace(id) != "" {
+		chunk, err := s.readRemoteChunk(ctx, id)
+		if err == nil {
+			a := chunk.toArtifact()
+			s.mu.Lock()
+			s.chunks[a.PersistedID] = a
+			s.mu.Unlock()
+			return a, nil
+		}
+	}
+
+	if strings.TrimSpace(queryKey) != "" {
+		chunk, err := s.readRemoteChunkByQueryKey(ctx, queryKey)
+		if err == nil {
+			a := chunk.toArtifact()
+			s.mu.Lock()
+			s.chunks[a.PersistedID] = a
+			s.mu.Unlock()
+			return a, nil
+		}
+	}
+
+	return artifacts.PersistedArtifact{}, backend.ErrNotFound
+}
+
+func (s *Store) localSearch(query string, limit int) ([]artifacts.PersistedArtifact, error) {
 	if err := s.loadAllFromDisk(); err != nil {
 		return nil, err
 	}

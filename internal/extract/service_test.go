@@ -55,3 +55,21 @@ func TestExtractUsesResolvedContentForTitleAndBody(t *testing.T) {
 		t.Fatalf("expected body to include resolved content, got %q", candidate.Body)
 	}
 }
+
+func TestReadContentFromRefSupportsGenericNestedContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "session.jsonl")
+
+	line := `{"id":"evt_generic","type":"message","content":[{"type":"text","text":"ADH means Agentic Development with Hizal."}]}` + "\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write session log: %v", err)
+	}
+
+	content, err := readContentFromRef(logPath + ":0")
+	if err != nil {
+		t.Fatalf("readContentFromRef failed: %v", err)
+	}
+	if !strings.Contains(content, "Agentic Development with Hizal") {
+		t.Fatalf("expected normalized nested content, got %q", content)
+	}
+}

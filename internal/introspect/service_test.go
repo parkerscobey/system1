@@ -144,6 +144,27 @@ func TestBuildFTSQueryDropsStopwordsAndAddsPrefixMatching(t *testing.T) {
 	}
 }
 
+func TestMaxRetrievalPassesByMode(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+		want int
+	}{
+		{name: "reflective default", mode: "reflective", want: 2},
+		{name: "metacognitive", mode: "metacognitive", want: 3},
+		{name: "ruminating", mode: "ruminating", want: 4},
+		{name: "unknown falls back", mode: "", want: 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maxRetrievalPasses(tc.mode); got != tc.want {
+				t.Fatalf("maxRetrievalPasses(%q)=%d, want %d", tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestQueryDebugModeIncludesProvenance(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

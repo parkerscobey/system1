@@ -120,10 +120,26 @@ func (s *Store) StartSession(ctx context.Context) (backend.NativeSessionResult, 
 }
 
 func (s *Store) EndSession(ctx context.Context) error {
-	// Shared API-key sessions make remote end_session risky here because System-1
-	// would close the caller's active Hizal session. Keep System-1 end_session
-	// local/no-op until dedicated agent-scoped auth exists.
-	s.logger.InfoContext(ctx, "skipping remote hizal end_session for shared session safety")
+	if s.skipRemoteEnd {
+		s.logger.InfoContext(ctx, "skipping remote hizal end_session (opt-out enabled)")
+		return nil
+	}
+
+	active, err := s.getActiveSession(ctx)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(active.Status, "active") || strings.TrimSpace(active.SessionID) == "" {
+		s.logger.InfoContext(ctx, "no active hizal session to end")
+		return nil
+	}
+
+	var resp map[string]any
+	if err := s.callJSON(ctx, "hizal.end_session", []string{"session_id=" + active.SessionID}, &resp); err != nil {
+		return err
+	}
+
+	s.logger.InfoContext(ctx, "ended active hizal session", "session_id", active.SessionID)
 	return nil
 }
 
@@ -147,6 +163,12 @@ func (s *Store) callJSON(ctx context.Context, selector string, args []string, ou
 }
 
 func (s *Store) remoteSearch(ctx context.Context, query string, limit int) ([]artifacts.PersistedArtifact, error) {
+	return s.remoteSearchWithOptions(ctx, backend.SearchContextRequest{Query: query, Limit: limit})
+}
+
+func (s *Store) remoteSearchWithOptions(ctx context.Context, req backend.SearchContextRequest) ([]artifacts.PersistedArtifact, error) {
+	query := req.Query
+	limit := req.Limit
 	query = normalizeSemanticQuery(query)
 	if query == "" {
 		return nil, nil
@@ -159,6 +181,15 @@ func (s *Store) remoteSearch(ctx context.Context, query string, limit int) ([]ar
 	args := []string{
 		"query=" + query,
 		fmt.Sprintf("limit=%d", limit),
+	}
+	if strings.TrimSpace(req.Scope) != "" {
+		args = append(args, "scope="+strings.ToUpper(strings.TrimSpace(req.Scope)))
+	}
+	if strings.TrimSpace(req.ChunkType) != "" {
+		args = append(args, "chunk_type="+strings.ToUpper(strings.TrimSpace(req.ChunkType)))
+	}
+	if req.AlwaysInjectOnly {
+		args = append(args, "always_inject_only=true")
 	}
 	if err := s.callJSON(ctx, "hizal.search_context", args, &resp); err != nil {
 		return nil, err

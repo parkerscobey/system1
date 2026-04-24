@@ -96,6 +96,48 @@ func TestStoreStartSessionUsesInjectedChunks(t *testing.T) {
 	}
 }
 
+func TestStoreEndSessionEndsRemoteWhenActive(t *testing.T) {
+	caller := &fakeCaller{responses: map[string]string{
+		"hizal.get_active_session": `{"session_id":"sess-123","status":"active"}`,
+		"hizal.end_session":        `{}`,
+	}}
+	store := newTestStore(t, caller)
+
+	if err := store.EndSession(context.Background()); err != nil {
+		t.Fatalf("EndSession failed: %v", err)
+	}
+
+	if len(caller.calls) < 2 {
+		t.Fatalf("expected get_active_session and end_session calls, got %v", caller.calls)
+	}
+	if caller.calls[0] != "hizal.get_active_session" {
+		t.Fatalf("first call = %q, want hizal.get_active_session", caller.calls[0])
+	}
+	if !strings.HasPrefix(caller.calls[1], "hizal.end_session") {
+		t.Fatalf("second call = %q, want hizal.end_session", caller.calls[1])
+	}
+	if !strings.Contains(caller.calls[1], "session_id=sess-123") {
+		t.Fatalf("end_session call missing session id: %q", caller.calls[1])
+	}
+}
+
+func TestStoreEndSessionSkipsWhenOptOutEnabled(t *testing.T) {
+	caller := &fakeCaller{responses: map[string]string{
+		"hizal.get_active_session": `{"session_id":"sess-123","status":"active"}`,
+		"hizal.end_session":        `{}`,
+	}}
+	store := newTestStore(t, caller)
+	store.skipRemoteEnd = true
+
+	if err := store.EndSession(context.Background()); err != nil {
+		t.Fatalf("EndSession failed: %v", err)
+	}
+
+	if len(caller.calls) != 0 {
+		t.Fatalf("expected no remote calls when opt-out enabled, got %v", caller.calls)
+	}
+}
+
 func TestStoreFindByScopePrimesInjectedCache(t *testing.T) {
 	caller := &fakeCaller{responses: map[string]string{
 		"hizal.get_active_session": `{"session_id":"sess-123","status":"active"}`,
@@ -140,6 +182,54 @@ func TestStoreSearchHydratesReadContext(t *testing.T) {
 	}
 }
 
+func TestStoreSearchContextPassesFilters(t *testing.T) {
+	caller := &fakeCaller{responses: map[string]string{
+		"hizal.search_context": `{"results":[{"id":"chunk-2","scope":"PROJECT","chunk_type":"KNOWLEDGE","query_key":"sys1-knowledge","title":"Design","content":"content","updated_at":"2026-04-11T04:17:07Z"}]}`,
+	}}
+	store := newTestStore(t, caller)
+
+	_, err := store.SearchContext(context.Background(), backend.SearchContextRequest{
+		Query:            "introspection retrieval",
+		Limit:            7,
+		Scope:            "project",
+		ChunkType:        "knowledge",
+		AlwaysInjectOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchContext failed: %v", err)
+	}
+
+	if len(caller.calls) == 0 {
+		t.Fatal("expected at least one call")
+	}
+	got := caller.calls[0]
+	for _, expected := range []string{"query=introspection retrieval", "limit=7", "scope=PROJECT", "chunk_type=KNOWLEDGE", "always_inject_only=true"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("call %q missing %q", got, expected)
+		}
+	}
+}
+
+func TestStoreReadContextUsesQueryKeyFallback(t *testing.T) {
+	caller := &fakeCaller{fullErrors: map[string]error{
+		"hizal.read_context id=chunk-missing": backend.ErrNotFound,
+	}, fullResponses: map[string]string{
+		"hizal.read_context query_key=sys1-knowledge": `{"id":"chunk-77","scope":"PROJECT","chunk_type":"KNOWLEDGE","query_key":"sys1-knowledge","title":"Architecture","content":"Remote only","updated_at":"2026-04-21T00:00:00Z"}`,
+	}}
+	store := newTestStore(t, caller)
+
+	got, err := store.ReadContext(context.Background(), "chunk-missing", "sys1-knowledge")
+	if err != nil {
+		t.Fatalf("ReadContext failed: %v", err)
+	}
+	if got.PersistedID != "chunk-77" {
+		t.Fatalf("PersistedID = %q, want chunk-77", got.PersistedID)
+	}
+	if got.BackendMetadata["query_key"] != "sys1-knowledge" {
+		t.Fatalf("query_key = %v", got.BackendMetadata["query_key"])
+	}
+}
+
 func TestStoreGetFallsBackToSystem1QueryKey(t *testing.T) {
 	caller := &fakeCaller{fullErrors: map[string]error{
 		"hizal.read_context query_key=system1-identity-art-77": backend.ErrNotFound,
@@ -163,8 +253,8 @@ func TestStoreGetFallsBackToSystem1QueryKey(t *testing.T) {
 
 func TestReadRemoteSystem1ArtifactContinuesOnNotFound(t *testing.T) {
 	caller := &fakeCaller{fullErrors: map[string]error{
-		"hizal.read_context query_key=system1-identity-art-77":  fmt.Errorf("lookup identity: %w", backend.ErrNotFound),
-		"hizal.read_context query_key=system1-memory-art-77":    backend.ErrNotFound,
+		"hizal.read_context query_key=system1-identity-art-77": fmt.Errorf("lookup identity: %w", backend.ErrNotFound),
+		"hizal.read_context query_key=system1-memory-art-77":   backend.ErrNotFound,
 	}, fullResponses: map[string]string{
 		"hizal.read_context query_key=system1-knowledge-art-77": `{"id":"chunk-77","scope":"PROJECT","chunk_type":"KNOWLEDGE","query_key":"system1-knowledge-art-77","title":"Architecture","content":"Remote only","updated_at":"2026-04-21T00:00:00Z"}`,
 	}}

@@ -32,6 +32,23 @@ type Backend interface {
 	Type() BackendType
 }
 
+// SearchContextRequest configures semantic chunk discovery for backends that
+// expose richer context APIs (for example Hizal's search_context tool).
+type SearchContextRequest struct {
+	Query            string
+	Limit            int
+	Scope            string
+	ChunkType        string
+	AlwaysInjectOnly bool
+}
+
+// ContextSearchBackend is an optional backend capability for advanced
+// introspection retrieval workflows that need semantic discovery + exact reads.
+type ContextSearchBackend interface {
+	SearchContext(ctx context.Context, req SearchContextRequest) ([]artifacts.PersistedArtifact, error)
+	ReadContext(ctx context.Context, id string, queryKey string) (artifacts.PersistedArtifact, error)
+}
+
 type NativeSessionResult struct {
 	SessionID string
 	Artifacts []artifacts.PersistedArtifact

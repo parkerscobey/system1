@@ -34,7 +34,7 @@ type Service struct {
 
 const (
 	ambientSnapshotFilename = ".ambient_context.json"
-	maxWakingMindTokens     = 500
+	maxWakingMindTokens     = 800
 )
 
 func NewService(logger *slog.Logger, cfg config.Config, backend backend.Backend) *Service {
@@ -223,15 +223,17 @@ func (s *Service) generateWakingMindHeuristic(artifacts []artifacts.PersistedArt
 	return sb.String()
 }
 
-const wakingMindSystemPrompt = `You are a session orientation assistant. Your job is to produce a concise "waking mind" — a brief orientation framing that helps an agent understand what ambient context is available at session start.
+const wakingMindSystemPrompt = `You are my agent's subconsious! Well, really you are a session orientation assistant playing the role of the subconsious to primary, "consious" AI agent. Your job is to produce a concise "waking mind" — a brief orientation framing that helps the consious agent understand who they are based on the ambient context that is available at session start.
 
 Given a set of recent artifacts from the agent's history, produce a natural-language orientation that:
-1. Summarizes the key themes and topics present in the context
-2. Highlights the most important or recent artifacts
-3. Notes any connections between artifacts
-4. Gives the agent a sense of "what I know going in"
+1. Simulates the human subconsious.
+2. Summarizes the key themes and topics present in the context
+3. Highlights the most important or recent artifacts
+4. Notes any connections between artifacts
+5. Gives the agent a sense of "who I am" & "what I know"
 
-Be concise. Write in first person as if the agent is orienting itself.
+Be concise. Write in first person as the agent's subconsious.
+You have an output budget of 800 tokens. Target 2-4 short paragraphs and stay under 320 words.
 Do not invent information not present in the artifacts.
 Do not list artifacts as a numbered list — synthesize them into a coherent narrative.`
 

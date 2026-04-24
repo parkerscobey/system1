@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/XferOps/system1/internal/backend"
@@ -11,6 +10,7 @@ import (
 	"github.com/XferOps/system1/internal/config"
 	"github.com/XferOps/system1/internal/daemon"
 	"github.com/XferOps/system1/internal/extract"
+	"github.com/XferOps/system1/internal/ingest"
 	"github.com/XferOps/system1/internal/introspect"
 	"github.com/XferOps/system1/internal/logging"
 	"github.com/XferOps/system1/internal/model"
@@ -25,6 +25,7 @@ type App struct {
 	Backend            backend.Backend
 	ModelProvider      model.Provider
 	SessionService     *session.Service
+	IngestService      *ingest.Service
 	Introspection      *introspect.Service
 	ExtractService     *extract.Service
 	PolicyService      *policy.Service
@@ -60,12 +61,18 @@ func New() (*App, error) {
 	if cfg.ModelProvider != "" && cfg.ModelProvider != "none" {
 		provider, err = model.NewProvider(cfg, logger)
 		if err != nil {
-			return nil, fmt.Errorf("init model provider %q: %w", cfg.ModelProvider, err)
+			logger.Warn("model provider init failed; continuing without model provider",
+				"provider", cfg.ModelProvider,
+				"error", err,
+			)
+			provider = nil
+		} else {
+			logger.Info("model provider initialized", "provider", provider.Name())
 		}
-		logger.Info("model provider initialized", "provider", provider.Name())
 	}
 
 	sessionSvc := session.NewService(logger, cfg, be)
+	ingestSvc := ingest.NewService(logger, cfg)
 	introspectionSvc := introspect.NewService(logger, cfg, be)
 	extractSvc := extract.NewService(logger, cfg)
 	policySvc := policy.NewService(logger, cfg, be)
@@ -77,7 +84,7 @@ func New() (*App, error) {
 		extractSvc = extractSvc.WithModelProvider(provider)
 	}
 
-	daemonRunner := daemon.NewRunner(logger, cfg, sessionSvc, introspectionSvc)
+	daemonRunner := daemon.NewRunner(logger, cfg, ingestSvc, extractSvc, policySvc, sessionSvc, introspectionSvc)
 
 	health := obs.NewHealth(logger)
 	decisionLog := obs.NewDecisionLog(logger)
@@ -89,6 +96,7 @@ func New() (*App, error) {
 		Backend:            be,
 		ModelProvider:      provider,
 		SessionService:     sessionSvc,
+		IngestService:      ingestSvc,
 		Introspection:      introspectionSvc,
 		ExtractService:     extractSvc,
 		PolicyService:      policySvc,

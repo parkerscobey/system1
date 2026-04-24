@@ -57,6 +57,51 @@ Current scaffold commands:
 
 These commands are intentionally thin. The real conscious-agent interface remains MCP-first.
 
+## Logging
+
+- Daemon logs go to `stdout` by default (text format).
+- Default level is `info`.
+- Configure with:
+  - `SYSTEM1_LOG_LEVEL` = `debug|info|warn|error`
+  - `SYSTEM1_LOG_FORMAT` = `text|json`
+
+## Ingestion Sources and Auto-Discovery
+
+System-1 currently runs one active ingestion source at a time.
+
+Source resolution order:
+1. `SYSTEM1_SESSION_LOG_PATH` (explicit override)
+2. System-1 default file: `~/.system1/sessions.jsonl`
+3. OpenCode JSONL auto-discovery (command probes + common paths)
+4. OpenCode SQLite auto-discovery:
+   - `~/.local/share/opencode/opencode.db`
+   - `~/.opencode/opencode.db`
+
+When OpenCode SQLite is used, System-1 normalizes message parts into a local mirror file:
+- `~/.system1/.ingest_opencode_mirror.jsonl`
+
+### Ingestion Tuning Flags
+
+- `SYSTEM1_INGEST_INITIAL_BACKFILL_HOURS`
+  - default: `24`
+  - used for first OpenCode SQLite backfill window
+- `SYSTEM1_INGEST_MAX_EVENTS_PER_CYCLE`
+  - default: `200`
+  - max normalized events processed per ingestion cycle
+
+### Extraction Logging Flag
+
+- `SYSTEM1_TRACE_EXTRACTION`
+  - default: `false`
+  - when `true`, enables per-span extraction debug logs
+  - when `false`, daemon emits compact cycle summaries
+
+### Hizal Session End Opt-Out
+
+- `SYSTEM1_HIZAL_SKIP_END_SESSION`
+  - default: `false`
+  - when `true`, `system1.end_session` does not call remote `hizal.end_session`
+
 ## Build
 
 ```bash

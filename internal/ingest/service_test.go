@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/config"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestParseEvent(t *testing.T) {
@@ -37,6 +39,47 @@ func TestParseEvent(t *testing.T) {
 	}
 	if event.RawRef == "" {
 		t.Errorf("expected non-empty RawRef")
+	}
+}
+
+func TestParseEventNormalizesFallbackFields(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmp := t.TempDir()
+	cfg := config.Config{
+		StateDir:       tmp,
+		SessionLogPath: filepath.Join(tmp, "sessions.jsonl"),
+		EnabledTypes:   []string{"MEMORY", "KNOWLEDGE"},
+	}
+
+	svc := NewService(logger, cfg)
+	line := `{"id":"evt_alt_1","source":"opencode","session":"sess_alt","type":"message","role":"user","timestamp":"2026-04-24T01:02:03Z","message":"hello"}`
+
+	event, err := svc.parseEvent(context.Background(), line, cfg.SessionLogPath, 0)
+	if err != nil {
+		t.Fatalf("parseEvent failed: %v", err)
+	}
+	if event.EventID != "evt_alt_1" {
+		t.Fatalf("EventID = %q, want evt_alt_1", event.EventID)
+	}
+	if event.SourceID != "opencode" {
+		t.Fatalf("SourceID = %q, want opencode", event.SourceID)
+	}
+	if event.SessionID != "sess_alt" {
+		t.Fatalf("SessionID = %q, want sess_alt", event.SessionID)
+	}
+}
+
+func TestParseOpenCodePathOutputJSON(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "sessions.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	output := `{"session_log_path":"` + path + `"}`
+	got := parseOpenCodePathOutput(output)
+	if got != path {
+		t.Fatalf("parseOpenCodePathOutput() = %q, want %q", got, path)
 	}
 }
 
@@ -273,6 +316,7 @@ func TestIngestNoLog(t *testing.T) {
 	}
 
 	svc := NewService(logger, cfg)
+	t.Setenv("SYSTEM1_SESSION_LOG_PATH", cfg.SessionLogPath)
 
 	stats, err := svc.Ingest(context.Background())
 	if err != nil {
@@ -314,5 +358,57 @@ func appendEvent(t *testing.T, path string, event string) {
 
 	if _, err := f.WriteString(event + "\n"); err != nil {
 		t.Fatalf("append event: %v", err)
+	}
+}
+
+func TestIngestAutoDiscoversOpenCodeSQLite(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmpDir := t.TempDir()
+
+	home := filepath.Join(tmpDir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".local", "share", "opencode"), 0o755); err != nil {
+		t.Fatalf("mkdir opencode dir: %v", err)
+	}
+	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`,
+		`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('msg1','sess1',1777010000000,1777010000000,'{"role":"user"}');`,
+		`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES ('part1','msg1','sess1',1777010001000,1777010001000,'{"type":"text","text":"I prefer deterministic tests."}');`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("SYSTEM1_SESSION_LOG_PATH", "")
+
+	cfg := config.Config{
+		StateDir:       filepath.Join(tmpDir, "state"),
+		ArtifactsDir:   filepath.Join(tmpDir, "artifacts"),
+		SQLitePath:     filepath.Join(tmpDir, "test.db"),
+		SessionLogPath: filepath.Join(tmpDir, "state", "sessions.jsonl"),
+		EnabledTypes:   []string{"MEMORY", "KNOWLEDGE"},
+	}
+
+	svc := NewService(logger, cfg)
+	stats, err := svc.Ingest(context.Background())
+	if err != nil {
+		t.Fatalf("Ingest failed: %v", err)
+	}
+	if stats.EventsProcessed == 0 {
+		t.Fatalf("expected sqlite discovery ingestion to process events")
+	}
+	if svc.sourceKind != "opencode_sqlite" {
+		t.Fatalf("sourceKind = %q, want opencode_sqlite", svc.sourceKind)
 	}
 }
