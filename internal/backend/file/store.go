@@ -142,6 +142,45 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 	return s.db.InsertArtifact(ctx, a, jsonPath)
 }
 
+func (s *Store) UpdateExisting(ctx context.Context, existing artifacts.PersistedArtifact, candidate artifacts.CandidateArtifact) (artifacts.PersistedArtifact, error) {
+	if existing.PersistedID == "" {
+		return artifacts.PersistedArtifact{}, errors.New("existing persisted_id is required")
+	}
+
+	current, err := s.Get(ctx, existing.PersistedID)
+	if err != nil {
+		return artifacts.PersistedArtifact{}, err
+	}
+
+	updated := current
+	updated.Title = candidate.Title
+	updated.Body = candidate.Body
+	updated.Confidence = candidate.Confidence
+	updated.CandidateID = candidate.CandidateID
+	updated.WrittenAt = time.Now().UTC()
+	updated.WriteStatus = "updated"
+	updated.Provenance = mergeProvenance(current.Provenance, candidate.Provenance, current.PersistedID)
+
+	scopeDir := filepath.Join(s.cfg.ArtifactsDir, strings.ToLower(updated.Scope))
+	if err := os.MkdirAll(scopeDir, 0755); err != nil {
+		return artifacts.PersistedArtifact{}, fmt.Errorf("create artifacts dir: %w", err)
+	}
+	jsonPath := filepath.Join(scopeDir, updated.PersistedID+".json")
+	data, err := json.MarshalIndent(updated, "", "  ")
+	if err != nil {
+		return artifacts.PersistedArtifact{}, fmt.Errorf("marshal updated artifact: %w", err)
+	}
+	if err := os.WriteFile(jsonPath, data, 0644); err != nil {
+		return artifacts.PersistedArtifact{}, fmt.Errorf("write updated artifact file: %w", err)
+	}
+
+	if err := s.db.UpdateArtifact(ctx, updated, jsonPath); err != nil {
+		return artifacts.PersistedArtifact{}, err
+	}
+
+	return updated, nil
+}
+
 func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact, error) {
 	if id == "" {
 		return artifacts.PersistedArtifact{}, errors.New("id is required")
@@ -223,6 +262,76 @@ func (db *DB) InsertArtifact(ctx context.Context, a artifacts.PersistedArtifact,
 		a.Provenance.ExtractionModel, string(derived),
 	)
 	return err
+}
+
+func (db *DB) UpdateArtifact(ctx context.Context, a artifacts.PersistedArtifact, jsonPath string) error {
+	evidence, _ := json.Marshal(a.Provenance.EvidenceSnippets)
+	sources, _ := json.Marshal(a.Provenance.SourceIDs)
+	sessions, _ := json.Marshal(a.Provenance.SessionIDs)
+	spans, _ := json.Marshal(a.Provenance.SpanIDs)
+	events, _ := json.Marshal(a.Provenance.EventIDs)
+	rawRefs, _ := json.Marshal(a.Provenance.RawRefs)
+	derived, _ := json.Marshal(a.Provenance.DerivedFromArtifactIDs)
+
+	_, err := db.ExecContext(ctx, `
+		UPDATE artifacts
+		SET artifact_type = ?, scope = ?, title = ?, body = ?, confidence = ?,
+			candidate_id = ?, backend_type = ?, backend_ref = ?, written_at = ?, write_status = ?,
+			evidence_snippets = ?, source_ids = ?, session_ids = ?, span_ids = ?, event_ids = ?, raw_refs = ?,
+			extraction_model = ?, derived_from_artifact_ids = ?
+		WHERE persisted_id = ?`,
+		a.ArtifactType, a.Scope, a.Title, a.Body, a.Confidence,
+		a.CandidateID, a.BackendType, jsonPath, a.WrittenAt.Unix(), a.WriteStatus,
+		string(evidence), string(sources), string(sessions), string(spans), string(events), string(rawRefs),
+		a.Provenance.ExtractionModel, string(derived), a.PersistedID,
+	)
+	return err
+}
+
+func mergeProvenance(existing artifacts.Provenance, incoming artifacts.Provenance, existingID string) artifacts.Provenance {
+	merged := existing
+	merged.SourceIDs = mergeStringSlices(existing.SourceIDs, incoming.SourceIDs)
+	merged.SessionIDs = mergeStringSlices(existing.SessionIDs, incoming.SessionIDs)
+	merged.SpanIDs = mergeStringSlices(existing.SpanIDs, incoming.SpanIDs)
+	merged.EventIDs = mergeStringSlices(existing.EventIDs, incoming.EventIDs)
+	merged.RawRefs = mergeStringSlices(existing.RawRefs, incoming.RawRefs)
+	merged.EvidenceSnippets = mergeStringSlices(existing.EvidenceSnippets, incoming.EvidenceSnippets)
+	merged.DerivedFromArtifactIDs = mergeStringSlices(existing.DerivedFromArtifactIDs, append(incoming.DerivedFromArtifactIDs, existingID))
+	if incoming.ExtractionModel != "" {
+		merged.ExtractionModel = incoming.ExtractionModel
+	}
+	if !incoming.ExtractionTime.IsZero() {
+		merged.ExtractionTime = incoming.ExtractionTime
+	}
+	return merged
+}
+
+func mergeStringSlices(a []string, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range b {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func (db *DB) GetArtifact(ctx context.Context, id string) (artifacts.PersistedArtifact, error) {

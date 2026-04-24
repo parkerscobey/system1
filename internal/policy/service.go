@@ -31,6 +31,8 @@ const (
 	DecisionApprove Decision = "approve"
 	DecisionReject  Decision = "reject"
 	DecisionDefer   Decision = "defer"
+
+	rectifyReasonPrefix = "update_existing:"
 )
 
 type Service struct {
@@ -84,6 +86,13 @@ func (s *Service) Evaluate(ctx context.Context, candidate artifacts.CandidateArt
 			slog.String("candidate_id", candidate.CandidateID),
 			slog.String("existing_id", existing.PersistedID))
 		return s.reject(candidate, "duplicate of existing artifact: "+existing.PersistedID), nil
+	}
+
+	if shouldUpdate, target := s.checkRectificationTarget(ctx, candidate); shouldUpdate {
+		s.logger.InfoContext(ctx, "candidate selected for silent rectification update",
+			slog.String("candidate_id", candidate.CandidateID),
+			slog.String("target_id", target.PersistedID))
+		return s.approve(candidate, rectifyReasonPrefix+target.PersistedID), nil
 	}
 
 	decision, reason := s.makeDecision(ctx, candidate)
@@ -184,6 +193,23 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 		return artifacts.PersistedArtifact{}, fmt.Errorf("candidate status %s not approved for persistence", candidate.Status)
 	}
 
+	if targetID, ok := parseRectifyTarget(candidate.ApprovalReason); ok {
+		if maintenance, ok := s.backend.(backend.MaintenanceBackend); ok {
+			existing, err := s.backend.Get(ctx, targetID)
+			if err != nil {
+				return artifacts.PersistedArtifact{}, err
+			}
+			updated, err := maintenance.UpdateExisting(ctx, existing, candidate)
+			if err != nil {
+				return artifacts.PersistedArtifact{}, err
+			}
+			s.logger.InfoContext(ctx, "artifact silently rectified",
+				slog.String("candidate_id", candidate.CandidateID),
+				slog.String("persisted_id", updated.PersistedID))
+			return updated, nil
+		}
+	}
+
 	persisted := artifacts.PersistedArtifact{
 		PersistedID:  uuid.New().String(),
 		ArtifactType: candidate.ArtifactType,
@@ -211,6 +237,17 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 		slog.String("persisted_id", persisted.PersistedID))
 
 	return persisted, nil
+}
+
+func parseRectifyTarget(reason string) (string, bool) {
+	if !strings.HasPrefix(reason, rectifyReasonPrefix) {
+		return "", false
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(reason, rectifyReasonPrefix))
+	if id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 func (s *Service) GetDeferredCount() int {
@@ -316,6 +353,119 @@ func (s *Service) makeDecision(ctx context.Context, candidate artifacts.Candidat
 	default:
 		return DecisionDefer, "low confidence - waiting for more signal"
 	}
+}
+
+func (s *Service) checkRectificationTarget(ctx context.Context, candidate artifacts.CandidateArtifact) (bool, artifacts.PersistedArtifact) {
+	if s.backend == nil {
+		return false, artifacts.PersistedArtifact{}
+	}
+
+	if candidate.Confidence == artifacts.ConfidenceLow {
+		return false, artifacts.PersistedArtifact{}
+	}
+
+	existingArtifacts, err := s.backend.FindByType(ctx, candidate.ArtifactType)
+	if err != nil {
+		s.logger.WarnContext(ctx, "rectification target scan failed", "error", err)
+		return false, artifacts.PersistedArtifact{}
+	}
+
+	for _, existing := range existingArtifacts {
+		if strings.ToUpper(existing.Scope) != strings.ToUpper(candidate.ProposedScope) {
+			continue
+		}
+		if existing.PersistedID == "" {
+			continue
+		}
+		if !likelyRectification(existing, candidate) {
+			continue
+		}
+		return true, existing
+	}
+
+	return false, artifacts.PersistedArtifact{}
+}
+
+func likelyRectification(existing artifacts.PersistedArtifact, candidate artifacts.CandidateArtifact) bool {
+	// TODO(sys1): Expand rectification matching with richer live-tested rules; current heuristic can still miss some conflicting profile/location corrections.
+	titleOverlap := computeOverlap(normalizeForDedup(existing.Title), normalizeForDedup(candidate.Title))
+	if titleOverlap < 0.55 {
+		return false
+	}
+
+	bodyOverlap := computeOverlap(normalizeForDedup(existing.Body), normalizeForDedup(candidate.Body))
+	if bodyOverlap > 0.9 || bodyOverlap < 0.1 {
+		return false
+	}
+
+	oldFields := structuredFieldMap(existing.Body)
+	newFields := structuredFieldMap(candidate.Body)
+	changedFields := 0
+	for key, oldValue := range oldFields {
+		if newValue, ok := newFields[key]; ok {
+			if oldValue != newValue {
+				changedFields++
+			}
+		}
+	}
+
+	if changedFields > 0 {
+		return true
+	}
+
+	if hasCorrectionCue(candidate.Body) && bodyOverlap < 0.85 {
+		return true
+	}
+
+	return false
+}
+
+func structuredFieldMap(body string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(body, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, ":") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := normalizeFieldKey(parts[0])
+		val := normalizeFieldValue(parts[1])
+		if key == "" || val == "" {
+			continue
+		}
+		result[key] = val
+	}
+	return result
+}
+
+func normalizeFieldKey(key string) string {
+	key = strings.ToLower(key)
+	key = strings.ReplaceAll(key, "*", "")
+	key = strings.ReplaceAll(key, "-", " ")
+	key = strings.TrimSpace(key)
+	return key
+}
+
+func normalizeFieldValue(val string) string {
+	val = strings.ToLower(strings.TrimSpace(val))
+	val = strings.ReplaceAll(val, "*", "")
+	val = strings.Join(strings.Fields(val), " ")
+	return val
+}
+
+func hasCorrectionCue(body string) bool {
+	text := strings.ToLower(body)
+	cues := []string{"actually", "correction", "updated", "instead", "not ", "no longer", "lives in", "location", "timezone"}
+	for _, cue := range cues {
+		if strings.Contains(text, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) approve(candidate artifacts.CandidateArtifact, reason string) artifacts.CandidateArtifact {

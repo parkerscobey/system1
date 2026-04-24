@@ -102,6 +102,12 @@ When OpenCode SQLite is used, System-1 normalizes message parts into a local mir
   - default: `false`
   - when `true`, `system1.end_session` does not call remote `hizal.end_session`
 
+## Known Follow-Up
+
+- Silent rectification (`update_existing`) is implemented but needs additional live validation for conflicting profile/location memories.
+- Current behavior can still create parallel conflicting artifacts in some extraction/policy shapes.
+- Keep this in active testing before treating background correction as complete.
+
 ## Build
 
 ```bash

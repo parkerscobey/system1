@@ -49,6 +49,13 @@ type ContextSearchBackend interface {
 	ReadContext(ctx context.Context, id string, queryKey string) (artifacts.PersistedArtifact, error)
 }
 
+// MaintenanceBackend is an optional backend capability for in-place memory
+// corrections when policy determines a candidate should rectify an existing
+// artifact instead of creating a new one.
+type MaintenanceBackend interface {
+	UpdateExisting(ctx context.Context, existing artifacts.PersistedArtifact, candidate artifacts.CandidateArtifact) (artifacts.PersistedArtifact, error)
+}
+
 type NativeSessionResult struct {
 	SessionID string
 	Artifacts []artifacts.PersistedArtifact

@@ -88,6 +88,36 @@ func (s *Store) Save(ctx context.Context, a artifacts.PersistedArtifact) error {
 	return nil
 }
 
+func (s *Store) UpdateExisting(ctx context.Context, existing artifacts.PersistedArtifact, candidate artifacts.CandidateArtifact) (artifacts.PersistedArtifact, error) {
+	if existing.PersistedID == "" {
+		return artifacts.PersistedArtifact{}, errors.New("existing persisted_id is required")
+	}
+
+	updated := existing
+	updated.Title = candidate.Title
+	updated.Body = candidate.Body
+	updated.Confidence = candidate.Confidence
+	updated.CandidateID = candidate.CandidateID
+	updated.WrittenAt = time.Now().UTC()
+	updated.WriteStatus = "updated"
+	updated.Provenance = mergeProvenance(existing.Provenance, candidate.Provenance, existing.PersistedID)
+
+	if remote, err := s.remoteUpdate(ctx, existing, updated); err == nil {
+		updated = remote
+	} else {
+		s.logger.WarnContext(ctx, "remote hizal update failed, applying local mirror update only",
+			"persisted_id", existing.PersistedID,
+			"error", err)
+	}
+
+	updated, _, err := s.writeLocalMirror(updated)
+	if err != nil {
+		return artifacts.PersistedArtifact{}, err
+	}
+
+	return updated, nil
+}
+
 func (s *Store) Get(ctx context.Context, id string) (artifacts.PersistedArtifact, error) {
 	// Check in-memory cache first
 	s.mu.RLock()
@@ -556,6 +586,52 @@ func cloneMetadata(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+func mergeProvenance(existing artifacts.Provenance, incoming artifacts.Provenance, existingID string) artifacts.Provenance {
+	merged := existing
+	merged.SourceIDs = mergeStringSlices(existing.SourceIDs, incoming.SourceIDs)
+	merged.SessionIDs = mergeStringSlices(existing.SessionIDs, incoming.SessionIDs)
+	merged.SpanIDs = mergeStringSlices(existing.SpanIDs, incoming.SpanIDs)
+	merged.EventIDs = mergeStringSlices(existing.EventIDs, incoming.EventIDs)
+	merged.RawRefs = mergeStringSlices(existing.RawRefs, incoming.RawRefs)
+	merged.EvidenceSnippets = mergeStringSlices(existing.EvidenceSnippets, incoming.EvidenceSnippets)
+	merged.DerivedFromArtifactIDs = mergeStringSlices(existing.DerivedFromArtifactIDs, append(incoming.DerivedFromArtifactIDs, existingID))
+	if incoming.ExtractionModel != "" {
+		merged.ExtractionModel = incoming.ExtractionModel
+	}
+	if !incoming.ExtractionTime.IsZero() {
+		merged.ExtractionTime = incoming.ExtractionTime
+	}
+	return merged
+}
+
+func mergeStringSlices(a []string, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range b {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
 	}
 	return out
 }

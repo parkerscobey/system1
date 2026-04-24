@@ -292,6 +292,53 @@ func (s *Store) remoteSave(ctx context.Context, a artifacts.PersistedArtifact) (
 	return stored, nil
 }
 
+func (s *Store) remoteUpdate(ctx context.Context, existing artifacts.PersistedArtifact, updated artifacts.PersistedArtifact) (artifacts.PersistedArtifact, error) {
+	chunkID := strings.TrimSpace(existing.PersistedID)
+	if v, ok := existing.BackendMetadata["chunk_id"].(string); ok && strings.TrimSpace(v) != "" {
+		chunkID = strings.TrimSpace(v)
+	}
+	if chunkID == "" {
+		return artifacts.PersistedArtifact{}, fmt.Errorf("cannot update remote chunk: missing chunk id")
+	}
+
+	args := []string{
+		"id=" + chunkID,
+		"change_note=system1 silent rectification update",
+		"content=" + updated.Body,
+		"title=" + updated.Title,
+		"gotchas=[]",
+		"related=[]",
+		"source_file=system1://policy-rectification",
+		"source_lines=[]",
+		"visibility=private",
+	}
+
+	var resp hizalChunk
+	if err := s.callJSON(ctx, "hizal.update_context", args, &resp); err != nil {
+		return artifacts.PersistedArtifact{}, err
+	}
+
+	stored := updated
+	if resp.ID != "" {
+		stored.PersistedID = resp.ID
+		stored.BackendRef = hizalRef(resp.ID)
+	}
+	if writtenAt := parseHizalTime(resp.UpdatedAt); !writtenAt.IsZero() {
+		stored.WrittenAt = writtenAt
+	}
+	meta := cloneMetadata(updated.BackendMetadata)
+	meta["store"] = "hizal"
+	meta["chunk_id"] = chunkID
+	if resp.QueryKey != "" {
+		meta["query_key"] = resp.QueryKey
+	}
+	stored.BackendMetadata = meta
+	stored.BackendType = string(backend.BackendTypeHizal)
+	stored.WriteStatus = "updated"
+
+	return stored, nil
+}
+
 func (s *Store) buildWriteCall(a artifacts.PersistedArtifact) (string, []string, string, error) {
 	queryKey, err := system1QueryKey(a)
 	if err != nil {
