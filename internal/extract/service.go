@@ -469,7 +469,10 @@ func readContentFromRef(ref string) (string, error) {
 		return "", fmt.Errorf("empty line at offset")
 	}
 
-	content := extractContentFromGenericEvent(line)
+	content, err := extractContentFromGenericEvent(line)
+	if err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(content) == "" {
 		return "", fmt.Errorf("no content field in event")
 	}
@@ -477,38 +480,38 @@ func readContentFromRef(ref string) (string, error) {
 	return content, nil
 }
 
-func extractContentFromGenericEvent(line string) string {
+func extractContentFromGenericEvent(line string) (string, error) {
 	var event map[string]any
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
-		return ""
+		return "", fmt.Errorf("malformed event JSON: %w", err)
 	}
 
 	if content, ok := event["content"]; ok {
 		if text := normalizeContentValue(content); strings.TrimSpace(text) != "" {
-			return text
+			return text, nil
 		}
 	}
 	for _, key := range []string{"text", "message", "body"} {
 		if v, ok := event[key]; ok {
 			if text := normalizeContentValue(v); strings.TrimSpace(text) != "" {
-				return text
+				return text, nil
 			}
 		}
 	}
 
 	if payload, ok := event["payload"].(map[string]any); ok {
 		if text := normalizeContentValue(payload["content"]); strings.TrimSpace(text) != "" {
-			return text
+			return text, nil
 		}
 	}
 
 	if data, ok := event["data"].(map[string]any); ok {
 		if text := normalizeContentValue(data["content"]); strings.TrimSpace(text) != "" {
-			return text
+			return text, nil
 		}
 	}
 
-	return ""
+	return "", nil
 }
 
 func normalizeContentValue(v any) string {

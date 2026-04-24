@@ -73,3 +73,39 @@ func TestReadContentFromRefSupportsGenericNestedContent(t *testing.T) {
 		t.Fatalf("expected normalized nested content, got %q", content)
 	}
 }
+
+func TestReadContentFromRefReturnsMalformedJSONError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "session.jsonl")
+
+	line := `{"id":"evt_bad","content":"unterminated"` + "\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write session log: %v", err)
+	}
+
+	_, err := readContentFromRef(logPath + ":0")
+	if err == nil {
+		t.Fatal("expected malformed event JSON error")
+	}
+	if !strings.Contains(err.Error(), "malformed event JSON") {
+		t.Fatalf("expected malformed event JSON error, got %v", err)
+	}
+}
+
+func TestReadContentFromRefReturnsNoContentFieldErrorForValidEmptyEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "session.jsonl")
+
+	line := `{"id":"evt_empty","type":"message"}` + "\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write session log: %v", err)
+	}
+
+	_, err := readContentFromRef(logPath + ":0")
+	if err == nil {
+		t.Fatal("expected no content field in event error")
+	}
+	if !strings.Contains(err.Error(), "no content field in event") {
+		t.Fatalf("expected no content field in event error, got %v", err)
+	}
+}
