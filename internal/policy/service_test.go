@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,10 @@ type maintenanceStub struct {
 	updatedID string
 }
 
+type nonMaintenanceStub struct {
+	byID map[string]artifacts.PersistedArtifact
+}
+
 func (m *maintenanceStub) Save(context.Context, artifacts.PersistedArtifact) error { return nil }
 func (m *maintenanceStub) Get(_ context.Context, id string) (artifacts.PersistedArtifact, error) {
 	a, ok := m.byID[id]
@@ -113,6 +118,37 @@ func (m *maintenanceStub) UpdateExisting(_ context.Context, existing artifacts.P
 	existing.WriteStatus = "updated"
 	return existing, nil
 }
+
+func (m *nonMaintenanceStub) Save(context.Context, artifacts.PersistedArtifact) error { return nil }
+func (m *nonMaintenanceStub) Get(_ context.Context, id string) (artifacts.PersistedArtifact, error) {
+	a, ok := m.byID[id]
+	if !ok {
+		return artifacts.PersistedArtifact{}, backend.ErrNotFound
+	}
+	return a, nil
+}
+func (m *nonMaintenanceStub) GetByCandidate(context.Context, string) (artifacts.PersistedArtifact, error) {
+	return artifacts.PersistedArtifact{}, backend.ErrNotFound
+}
+func (m *nonMaintenanceStub) FindByType(_ context.Context, _ string) ([]artifacts.PersistedArtifact, error) {
+	out := make([]artifacts.PersistedArtifact, 0, len(m.byID))
+	for _, a := range m.byID {
+		out = append(out, a)
+	}
+	return out, nil
+}
+func (m *nonMaintenanceStub) FindByScope(context.Context, artifacts.ArtifactScope) ([]artifacts.PersistedArtifact, error) {
+	return nil, nil
+}
+func (m *nonMaintenanceStub) FindBounded(context.Context, time.Time, time.Time) ([]artifacts.PersistedArtifact, error) {
+	return nil, nil
+}
+func (m *nonMaintenanceStub) Search(context.Context, string, int) ([]artifacts.PersistedArtifact, error) {
+	return nil, nil
+}
+func (m *nonMaintenanceStub) TypeRegistry(context.Context) ([]string, error) { return []string{"MEMORY"}, nil }
+func (m *nonMaintenanceStub) Close() error { return nil }
+func (m *nonMaintenanceStub) Type() backend.BackendType { return backend.BackendTypeFile }
 
 func TestPersistApprovedUsesSilentRectificationPath(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -153,5 +189,41 @@ func TestPersistApprovedUsesSilentRectificationPath(t *testing.T) {
 	}
 	if persisted.WriteStatus != "updated" {
 		t.Fatalf("write status = %q, want updated", persisted.WriteStatus)
+	}
+}
+
+func TestPersistApprovedRectifyRequiresMaintenanceBackend(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := &nonMaintenanceStub{byID: map[string]artifacts.PersistedArtifact{
+		"chunk-1": {
+			PersistedID:  "chunk-1",
+			ArtifactType: "MEMORY",
+			Scope:        "AGENT",
+			Title:        "About Parker",
+			Body:         "Location: Chicago",
+		},
+	}}
+	svc := NewService(logger, config.Config{EnabledTypes: []string{"MEMORY"}}, store)
+
+	candidate := artifacts.CandidateArtifact{
+		CandidateID:    "cand-update",
+		ArtifactType:   "MEMORY",
+		ProposedScope:  "AGENT",
+		Title:          "About Parker",
+		Body:           "Location: Tennessee",
+		Confidence:     artifacts.ConfidenceHigh,
+		Status:         artifacts.StatusApproved,
+		ApprovalReason: "update_existing:chunk-1",
+		Provenance: artifacts.Provenance{
+			EvidenceSnippets: []string{"Location: Tennessee"},
+		},
+	}
+
+	_, err := svc.PersistApproved(context.Background(), candidate)
+	if err == nil {
+		t.Fatalf("expected explicit error when backend lacks maintenance support")
+	}
+	if got := err.Error(); !strings.Contains(got, "parseRectifyTarget") || !strings.Contains(got, "backend.MaintenanceBackend") || !strings.Contains(got, "chunk-1") {
+		t.Fatalf("expected explicit rectification backend error, got %q", got)
 	}
 }

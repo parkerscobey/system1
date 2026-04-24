@@ -208,6 +208,7 @@ func (s *Service) PersistApproved(ctx context.Context, candidate artifacts.Candi
 				slog.String("persisted_id", updated.PersistedID))
 			return updated, nil
 		}
+		return artifacts.PersistedArtifact{}, fmt.Errorf("parseRectifyTarget(candidate.ApprovalReason=%q) requested update_existing targetID=%q, but s.backend=%T does not implement backend.MaintenanceBackend; refusing to create new artifact", candidate.ApprovalReason, targetID, s.backend)
 	}
 
 	persisted := artifacts.PersistedArtifact{
