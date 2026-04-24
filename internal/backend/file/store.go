@@ -170,12 +170,12 @@ func (s *Store) UpdateExisting(ctx context.Context, existing artifacts.Persisted
 	if err != nil {
 		return artifacts.PersistedArtifact{}, fmt.Errorf("marshal updated artifact: %w", err)
 	}
-	if err := os.WriteFile(jsonPath, data, 0644); err != nil {
-		return artifacts.PersistedArtifact{}, fmt.Errorf("write updated artifact file: %w", err)
-	}
-
 	if err := s.db.UpdateArtifact(ctx, updated, jsonPath); err != nil {
 		return artifacts.PersistedArtifact{}, err
+	}
+
+	if err := os.WriteFile(jsonPath, data, 0644); err != nil {
+		return artifacts.PersistedArtifact{}, fmt.Errorf("write updated artifact file: %w", err)
 	}
 
 	return updated, nil
