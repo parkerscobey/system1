@@ -2,6 +2,7 @@ package hizal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,8 @@ import (
 type fakeCaller struct {
 	responses     map[string]string
 	fullResponses map[string]string
+	errors        map[string]error
+	fullErrors    map[string]error
 	calls         []string
 }
 
@@ -25,6 +28,12 @@ func (f *fakeCaller) Call(_ context.Context, selector string, args []string) ([]
 		call += " " + strings.Join(args, " ")
 	}
 	f.calls = append(f.calls, call)
+	if err, ok := f.fullErrors[call]; ok {
+		return nil, err
+	}
+	if err, ok := f.errors[selector]; ok {
+		return nil, err
+	}
 	if resp, ok := f.fullResponses[call]; ok {
 		return []byte(resp), nil
 	}
@@ -132,7 +141,10 @@ func TestStoreSearchHydratesReadContext(t *testing.T) {
 }
 
 func TestStoreGetFallsBackToSystem1QueryKey(t *testing.T) {
-	caller := &fakeCaller{fullResponses: map[string]string{
+	caller := &fakeCaller{fullErrors: map[string]error{
+		"hizal.read_context query_key=system1-identity-art-77": backend.ErrNotFound,
+		"hizal.read_context query_key=system1-memory-art-77":   backend.ErrNotFound,
+	}, fullResponses: map[string]string{
 		"hizal.read_context query_key=system1-knowledge-art-77": `{"id":"chunk-77","scope":"PROJECT","chunk_type":"KNOWLEDGE","query_key":"system1-knowledge-art-77","title":"Architecture","content":"Remote only","updated_at":"2026-04-21T00:00:00Z"}`,
 	}}
 	store := newTestStore(t, caller)
@@ -146,6 +158,48 @@ func TestStoreGetFallsBackToSystem1QueryKey(t *testing.T) {
 	}
 	if got.BackendMetadata["query_key"] != "system1-knowledge-art-77" {
 		t.Fatalf("query_key = %v", got.BackendMetadata["query_key"])
+	}
+}
+
+func TestReadRemoteSystem1ArtifactContinuesOnNotFound(t *testing.T) {
+	caller := &fakeCaller{fullErrors: map[string]error{
+		"hizal.read_context query_key=system1-identity-art-77":  fmt.Errorf("lookup identity: %w", backend.ErrNotFound),
+		"hizal.read_context query_key=system1-memory-art-77":    backend.ErrNotFound,
+	}, fullResponses: map[string]string{
+		"hizal.read_context query_key=system1-knowledge-art-77": `{"id":"chunk-77","scope":"PROJECT","chunk_type":"KNOWLEDGE","query_key":"system1-knowledge-art-77","title":"Architecture","content":"Remote only","updated_at":"2026-04-21T00:00:00Z"}`,
+	}}
+	store := newTestStore(t, caller)
+
+	got, err := store.readRemoteSystem1Artifact(context.Background(), "art-77")
+	if err != nil {
+		t.Fatalf("readRemoteSystem1Artifact failed: %v", err)
+	}
+	if got.PersistedID != "art-77" {
+		t.Fatalf("PersistedID = %q, want art-77", got.PersistedID)
+	}
+	if got.BackendMetadata["query_key"] != "system1-knowledge-art-77" {
+		t.Fatalf("query_key = %v", got.BackendMetadata["query_key"])
+	}
+	if got.BackendMetadata["chunk_id"] != "chunk-77" {
+		t.Fatalf("chunk_id = %v", got.BackendMetadata["chunk_id"])
+	}
+}
+
+func TestReadRemoteSystem1ArtifactReturnsNonNotFoundErrors(t *testing.T) {
+	caller := &fakeCaller{errors: map[string]error{
+		"hizal.read_context": errors.New("auth failed"),
+	}}
+	store := newTestStore(t, caller)
+
+	_, err := store.readRemoteSystem1Artifact(context.Background(), "art-77")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "auth failed") {
+		t.Fatalf("error = %v, want auth failed", err)
+	}
+	if len(caller.calls) != 1 {
+		t.Fatalf("call count = %d, want 1", len(caller.calls))
 	}
 }
 

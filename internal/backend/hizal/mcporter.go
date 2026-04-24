@@ -3,6 +3,7 @@ package hizal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -208,7 +209,10 @@ func (s *Store) readRemoteSystem1Artifact(ctx context.Context, persistedID strin
 		queryKey := system1ArtifactQueryKey(artifactType, persistedID)
 		chunk, err := s.readRemoteChunkByQueryKey(ctx, queryKey)
 		if err != nil {
-			continue
+			if errors.Is(err, backend.ErrNotFound) {
+				continue
+			}
+			return artifacts.PersistedArtifact{}, err
 		}
 		artifact := chunk.toArtifact()
 		artifact.PersistedID = persistedID
