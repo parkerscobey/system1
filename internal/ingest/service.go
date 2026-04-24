@@ -460,6 +460,9 @@ func (s *Service) discoverSessionLogPath(ctx context.Context) error {
 
 func discoverOpenCodeSessionLog() (string, error) {
 	if _, err := exec.LookPath("opencode"); err != nil {
+		if !errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf("look up opencode executable: %w", err)
+		}
 		return "", nil
 	}
 
@@ -469,7 +472,7 @@ func discoverOpenCodeSessionLog() (string, error) {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", nil
+		return "", fmt.Errorf("resolve user home directory: %w", err)
 	}
 
 	candidates := []string{
