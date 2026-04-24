@@ -325,9 +325,14 @@ func (s *Store) remoteUpdate(ctx context.Context, existing artifacts.PersistedAr
 	}
 
 	stored := updated
-	if resp.ID != "" {
-		stored.PersistedID = resp.ID
-		stored.BackendRef = hizalRef(resp.ID)
+	if respID := strings.TrimSpace(resp.ID); respID != "" {
+		storedID := strings.TrimSpace(stored.PersistedID)
+		if storedID == "" || storedID == respID {
+			stored.PersistedID = respID
+			stored.BackendRef = hizalRef(respID)
+		} else if strings.TrimSpace(stored.BackendRef) == "" {
+			stored.BackendRef = hizalRef(storedID)
+		}
 	}
 	if writtenAt := parseHizalTime(resp.UpdatedAt); !writtenAt.IsZero() {
 		stored.WrittenAt = writtenAt
