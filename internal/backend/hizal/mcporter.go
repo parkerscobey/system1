@@ -262,7 +262,10 @@ func (s *Store) remoteSave(ctx context.Context, a artifacts.PersistedArtifact) (
 }
 
 func (s *Store) buildWriteCall(a artifacts.PersistedArtifact) (string, []string, string, error) {
-	queryKey := system1QueryKey(a)
+	queryKey, err := system1QueryKey(a)
+	if err != nil {
+		return "", nil, "", err
+	}
 	baseArgs := []string{
 		"content=" + a.Body,
 		"query_key=" + queryKey,
@@ -298,12 +301,15 @@ func (s *Store) buildWriteCall(a artifacts.PersistedArtifact) (string, []string,
 	}
 }
 
-func system1QueryKey(a artifacts.PersistedArtifact) string {
+func system1QueryKey(a artifacts.PersistedArtifact) (string, error) {
 	base := strings.TrimSpace(a.PersistedID)
 	if base == "" {
 		base = strings.TrimSpace(a.CandidateID)
 	}
-	return system1ArtifactQueryKey(a.ArtifactType, base)
+	if base == "" {
+		return "", fmt.Errorf("empty deterministic query-key base: both PersistedID and CandidateID empty")
+	}
+	return system1ArtifactQueryKey(a.ArtifactType, base), nil
 }
 
 func system1ArtifactQueryKey(artifactType, base string) string {
