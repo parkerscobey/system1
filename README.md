@@ -2,7 +2,8 @@
 
 System-1 is a subconscious runtime for AI agents.
 
-This is a deliberately vibe-coded project: fast iteration, direct feedback loops, and pragmatic architecture changes as behavior is observed in real sessions.
+*This is a vibe-coded project.*
+
 The primary product goal is to reduce the tool-calling surface and memory-management burden of the conscious agent.
 The conscious agent should spend less time orchestrating memory tools and more time doing useful work.
 
@@ -10,23 +11,25 @@ This repo is the Go implementation of the first thin vertical slice:
 
 - single daemon
 - single agent
-- file backend, plus experimental Hizal backend
+- file backend and Hizal backend (both active)
+- real daemon loop: ingest -> extract -> policy -> persist
+- OpenCode auto-discovery (JSONL and SQLite)
 - startup Waking Mind
 - MCP-first Introspection
 
 ## Current status
 
-This repository is intentionally scaffold-first.
+This repository is still MVP-thin, but no longer just scaffold.
 
 In plain terms: this repo is where we aggressively prototype the subconscious layer so the main agent can stay simple.
 If a feature does not clearly reduce conscious-agent context/tool overhead, it is likely not the right priority.
 
-The immediate goal is to prove the System-1 MVP loop:
+The active MVP loop in daemon runtime is:
 
 1. ingest one agent's session logs
 2. build turn-based spans
 3. extract candidate artifacts conservatively
-4. run policy, dedup, and deferral
+4. run policy, dedup, deferral, and early silent-rectification routing
 5. persist artifacts to a backend
 6. assemble ambient context + Waking Mind at session start
 7. answer `introspect(...)` queries with grounded recall
@@ -39,11 +42,11 @@ internal/app             # top-level wiring
 internal/cli             # cobra commands
 internal/config          # explicit config loading
 internal/logging         # slog setup
-internal/daemon          # root runtime loop
+internal/daemon          # runtime loop + ingestion/extraction/policy orchestration
 internal/artifacts       # core structs
-internal/ingest          # log watching + span building
+internal/ingest          # source discovery + ingest + span building
 internal/extract         # candidate extraction
-internal/policy          # approval / reject / defer / dedup
+internal/policy          # approval / reject / defer / dedup / update-existing routing
 internal/backend/file    # JSON artifacts + SQLite sidecar
 internal/session         # ambient context + Waking Mind
 internal/introspect      # retrieval + synthesis entrypoints

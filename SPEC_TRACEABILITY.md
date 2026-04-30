@@ -73,6 +73,20 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
 
 ## Current audit summary
 
+### Status refresh (Apr 2026)
+
+This file contains older drift notes from early scaffold phases. Current runtime has advanced beyond several of those statements.
+
+Key updates to keep in mind while reading the matrix below:
+
+- daemon runtime now executes a real loop: ingest -> extract -> policy -> persist
+- OpenCode source discovery now supports JSONL and SQLite (`opencode.db`) ingestion paths
+- introspection now includes model-assisted multi-pass retrieval behavior for Hizal-backed flows
+- policy includes early silent-rectification routing (`update_existing`) but requires more live validation
+- Hizal backend save/read/session and end-session behaviors are active; not scaffold-only
+
+Use package-level code and latest tickets/chunks for final authority when this file's older paragraphs conflict with current implementation details.
+
 ### Healthy enough
 
 - substrate to span pipeline exists
@@ -87,11 +101,11 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
    - tickets cited non-canonical keys from the old pre-canonical set
    - normalized during first audit pass, script check-spec-keys.sh now catches regressions
 
-2. **Scaffold behavior is starting to masquerade as spec behavior**
-   - session lifecycle is shallow in several places
-   - Waking Mind generation is just snippet formatting, not true orientation logic
-   - introspection is lexical and shallow, not staged recall
-   - extraction is heuristic, not spec-shaped conservative extraction
+2. **Some behavior remains partially scaffold-like**
+   - session lifecycle still lacks full surfacing/consolidation semantics
+   - Waking Mind quality is improved but still prompt/heuristic constrained
+   - extraction remains conservative but still not fully spec-grade
+   - maintenance/rectification requires more live validation
 
 3. **Critical invariants are represented in structs more than enforced in behavior**
    - provenance exists
@@ -107,16 +121,16 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
 | 3. Substrate, Span Model, and Processing Pipeline | Mostly MVP | SYS1-2 | Turn/segment span building exists in `internal/ingest/service.go`, but still narrow and single-source |
 | 4. Internal Artifact Model | Mostly MVP | SYS1-3, SYS1-21 | `internal/artifacts/types.go` is solid MVP substrate |
 | 5. Session Lifecycle, Waking Mind, and Ambient Context Surfacing | Partial | SYS1-7, SYS1-19, SYS1-24 | `start_session` works, `end_session` is mostly no-op, surfacing/consolidation behavior not real yet |
-| 6. Introspection Interface and Behavior | Partial | SYS1-8, SYS1-19, SYS1-20, SYS1-24, SYS1-16 | Interface exists, behavior still shallow and mostly lexical |
+| 6. Introspection Interface and Behavior | Partial+ | SYS1-8, SYS1-19, SYS1-20, SYS1-24, SYS1-16 | Interface is active with model-assisted retrieval/synthesis, but still not full spec-depth across all modes |
 | 7. Backend Abstraction Contract | Partial | SYS1-3, SYS1-6, SYS1-11, SYS1-22 | Backend interface exists, but richer contract boundaries still fuzzy around session/native behaviors |
 | 8. Extraction Layer Design | Partial | SYS1-4, SYS1-21 | Conservative shape exists, but extraction is heuristics over text, not robust spec-grade extraction |
-| 9. Policy Gate, Deferred Decisions, Dedup, and Persistence Flow | Partial | SYS1-5, SYS1-25, SYS1-26 | Core loop exists, but deferred state is in-memory and policy sophistication still thin |
+| 9. Policy Gate, Deferred Decisions, Dedup, and Persistence Flow | Partial+ | SYS1-5, SYS1-25, SYS1-26 | Core loop exists in daemon runtime with dedup and early update-existing routing; rectification tuning still in progress |
 | 10. Ambient Context Selection and Waking Mind Generation | Partial | SYS1-7, SYS1-20, SYS1-24, SYS1-13 | Ambient selection is simple recency sort, not spec-level continuity ranking |
 | 11. File Backend Reference Design | Mostly MVP | SYS1-6 | Strongest aligned area today |
-| 12. Hizal Backend Design | Partial | SYS1-11, SYS1-22, SYS1-25, SYS1-26 | Save/read path exists, but native session/injection alignment still scaffoldy |
+| 12. Hizal Backend Design | Partial+ | SYS1-11, SYS1-22, SYS1-25, SYS1-26 | Save/read/session integration is active; remaining drift is deeper native lifecycle and consolidation semantics |
 | 13. Truth, Provenance, and Anti-Hallucination Guarantees | Partial | SYS1-4, SYS1-5, SYS1-8, SYS1-9, SYS1-17 | Evidence exists in structs and debug output, but guarantees are not yet systemically enforced |
 | 14. Glossary and Naming Conventions | Partial | SYS1-1 | Naming mostly good, but no canonical in-repo glossary/reference doc until this file |
-| 15. Retrieval and Introspection Internals | Partial | SYS1-8, SYS1-20, SYS1-24, SYS1-16 | Current retrieval is ambient-first plus FTS, not full staged introspection |
+| 15. Retrieval and Introspection Internals | Partial+ | SYS1-8, SYS1-20, SYS1-24, SYS1-16 | Retrieval now supports multi-step Hizal search/read planning with intent reconstruction, still short of full spec endpoint |
 | 16. Focus-Shift Inference | Not started | SYS1-13 | Ticket exists, code does not |
 | 17. Setup Wizard and Configuration Model | Not started / minimal | SYS1-14, SYS1-15 | Env config and `doctor` exist, not a real setup model |
 | 18. Observability and Debugging | Partial | SYS1-9, SYS1-17 | Basic health and introspection traces exist, but not full cognitive traceability |
@@ -144,17 +158,16 @@ When checking PRs or tickets against invariants, use this numbered list. PR temp
   - session end does not yet perform meaningful surfacing/consolidation
 
 - `internal/introspect/service.go`
-  - query handling is mostly token overlap plus FTS
-  - calibration and broad recall are shallow special cases
-  - no real staged reflective/metacognitive retrieval loop yet
+  - major improvements landed (intent reconstruction, mode-conditioned behavior, multi-step Hizal retrieval)
+  - still needs deeper confidence/uncertainty surfacing and broader live hardening
 
 - `internal/extract/service.go`
   - extraction is keyword heuristic based
   - candidate generation is thin and likely too brittle for spec intent
 
-- `internal/backend/hizal/session.go`
-  - currently scaffold-level session lifecycle
-  - returns synthetic Waking Mind strings instead of native ambient orientation derived from actual Hizal session/injection state
+- `internal/backend/hizal/*`
+  - session start/end and read/write flows are active
+  - still needs deeper native surfacing/consolidation semantics for full parity
 
 - `internal/obs/*.go`
   - enough for MVP smoke checks
