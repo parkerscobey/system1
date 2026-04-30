@@ -2,6 +2,8 @@
 
 System-1 exists to take memory and context management out of the main agent's conscious loop.
 
+Execution style note: this is a vibe-coded system. We prioritize real-loop behavior over perfect up-front design, then harden what proves useful.
+
 The conscious agent should not have to manually orchestrate a bag of memory tools every few turns.
 It should be able to introspect.
 

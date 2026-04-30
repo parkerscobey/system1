@@ -2,6 +2,10 @@
 
 System-1 is a subconscious runtime for AI agents.
 
+This is a deliberately vibe-coded project: fast iteration, direct feedback loops, and pragmatic architecture changes as behavior is observed in real sessions.
+The primary product goal is to reduce the tool-calling surface and memory-management burden of the conscious agent.
+The conscious agent should spend less time orchestrating memory tools and more time doing useful work.
+
 This repo is the Go implementation of the first thin vertical slice:
 
 - single daemon
@@ -13,6 +17,9 @@ This repo is the Go implementation of the first thin vertical slice:
 ## Current status
 
 This repository is intentionally scaffold-first.
+
+In plain terms: this repo is where we aggressively prototype the subconscious layer so the main agent can stay simple.
+If a feature does not clearly reduce conscious-agent context/tool overhead, it is likely not the right priority.
 
 The immediate goal is to prove the System-1 MVP loop:
 
@@ -142,6 +149,7 @@ Use `--include-resolved` if you intentionally want to re-run prompts from resolv
 - type registry stays generic even if MVP only enables `MEMORY` and `KNOWLEDGE`
 - introspection is MCP-first, CLI-mirrored for development and debugging
 - no fake abstractions beyond what the MVP needs
+- optimize for less conscious-agent tool orchestration over time
 
 ## MVP explicitly out of scope
 
