@@ -24,10 +24,10 @@ System-1 is the layer beneath that interface:
 The first real version of System-1 is intentionally narrow:
 
 - single agent
-- file backend only
+- file backend and Hizal backend
 - turn-based extraction
 - startup-only ambient context
-- bounded introspection
+- bounded but model-assisted introspection
 
 The MVP proves the subconscious loop.
 
@@ -35,7 +35,7 @@ The MVP proves the subconscious loop.
 
 After the MVP, System-1 grows into:
 
-- Hizal-native backend support
+- deeper Hizal-native semantics (session surfacing/consolidation hardening)
 - multiplexed multi-agent runtime
 - focus-shift inference and refresh
 - richer introspection depth

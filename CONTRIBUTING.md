@@ -10,6 +10,7 @@ This project is still in early scaffold/MVP phase.
 - keep the MVP thin
 - do not collapse the generic artifact model into hardcoded long-term limitations
 - preserve MCP-first Introspection as the primary interface
+- prefer changes that reduce conscious-agent tool-calling and context-management responsibilities
 - favor explicitness over framework magic
 - respect the 8 canonical invariants in `SPEC_TRACEABILITY.md` — use them by number in PR checklists
 
