@@ -29,7 +29,7 @@ func TestModelSynthesisHappyPath(t *testing.T) {
 	// Create mock provider that returns a synthesized response
 	mockProv := model.NewMockProvider("test-model")
 	mockProv.AddResponse(model.Response{
-		Text: "Based on your session context, you're working on Go backend services with SQLite storage. The codebase uses the model provider interface.",
+		Text: `{"inferred_intent":"summarize known codebase context","answer":"Based on your session context, you're working on Go backend services with SQLite storage. The codebase uses the model provider interface.","supporting_artifact_ids":["artifact-1"]}`,
 		Metadata: model.ResponseMetadata{
 			Provider: "test-model",
 			Model:    "test",
@@ -143,7 +143,7 @@ func TestModelSynthesisPreservesDebugRefsAndEvidence(t *testing.T) {
 	// Create mock provider that returns a synthesized response
 	mockProv := model.NewMockProvider("test-model")
 	mockProv.AddResponse(model.Response{
-		Text: "Based on the retrieved artifacts, here is your answer.",
+		Text: `{"inferred_intent":"debug response","answer":"Based on the retrieved artifacts, here is your answer.","supporting_artifact_ids":["artifact-debug"]}`,
 		Metadata: model.ResponseMetadata{
 			Provider: "test-model",
 		},
@@ -219,7 +219,7 @@ func TestModelSynthesisCalibrationQuery(t *testing.T) {
 	// Create mock provider that returns a calibration-style response
 	mockProv := model.NewMockProvider("test-model")
 	mockProv.AddResponse(model.Response{
-		Text: "Looking at your context, you have strong coverage of Go backend patterns but limited frontend documentation. Consider adding UI component examples.",
+		Text: `{"inferred_intent":"identify missing areas","answer":"Looking at your context, you have strong coverage of Go backend patterns but limited frontend documentation. Consider adding UI component examples.","supporting_artifact_ids":["artifact-cal"]}`,
 		Metadata: model.ResponseMetadata{
 			Provider: "test-model",
 		},
@@ -286,7 +286,7 @@ func TestBuildModelPromptIncludesAllContext(t *testing.T) {
 		},
 	}
 
-	prompt := buildModelPrompt("what do I know about testing", artifacts, false, "ambient")
+	prompt := buildModelPrompt("what do I know about testing", artifacts, false, "ambient", "reflective")
 
 	if !strings.Contains(prompt, "what do I know about testing") {
 		t.Error("prompt should contain user query")
@@ -313,29 +313,32 @@ func TestBuildModelPromptCalibrationFlag(t *testing.T) {
 	artifacts := []artifacts.PersistedArtifact{}
 
 	// Test non-calibration prompt
-	normalPrompt := buildModelPrompt("test query", artifacts, false, "ambient")
+	normalPrompt := buildModelPrompt("test query", artifacts, false, "ambient", "reflective")
 	if strings.Contains(normalPrompt, "calibration query") {
 		t.Error("normal prompt should not mention calibration")
 	}
 
 	// Test calibration prompt
-	calPrompt := buildModelPrompt("what am I missing", artifacts, true, "ambient")
+	calPrompt := buildModelPrompt("what am I missing", artifacts, true, "ambient", "reflective")
 	if !strings.Contains(calPrompt, "calibration query") {
 		t.Error("calibration prompt should mention calibration")
 	}
 }
 
 func TestBuildSystemPrompt(t *testing.T) {
-	normalPrompt := buildSystemPrompt(false)
+	normalPrompt := buildSystemPrompt(false, "reflective")
 	if strings.Contains(normalPrompt, "calibration") {
 		t.Error("normal system prompt should not mention calibration")
 	}
-	if !strings.Contains(normalPrompt, "introspection assistant") {
-		t.Error("normal system prompt should mention introspection")
+	if !strings.Contains(normalPrompt, "subconscious") {
+		t.Error("normal system prompt should mention subconscious voice")
+	}
+	if !strings.Contains(normalPrompt, "first person") {
+		t.Error("normal system prompt should enforce first-person voice")
 	}
 
-	calPrompt := buildSystemPrompt(true)
-	if !strings.Contains(calPrompt, "identify gaps") {
+	calPrompt := buildSystemPrompt(true, "metacognitive")
+	if !strings.Contains(calPrompt, "likely missing context") {
 		t.Error("calibration system prompt should mention identifying gaps")
 	}
 }

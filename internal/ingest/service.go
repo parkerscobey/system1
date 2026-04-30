@@ -3,18 +3,23 @@ package ingest
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/config"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -29,6 +34,9 @@ const (
 	BoundaryExplicit = "explicit"
 	BoundaryQuiet    = "quiet_period"
 	BoundaryEOF      = "end_of_log"
+
+	defaultInitialBackfillHours = 24
+	defaultMaxEventsPerCycle    = 200
 )
 
 type QuietPeriodConfig struct {
@@ -38,6 +46,14 @@ type QuietPeriodConfig struct {
 type Service struct {
 	logger     *slog.Logger
 	cfg        config.Config
+	sessionLog string
+	sourceKind string
+	opencodeDB string
+	mirrorPath string
+
+	initialBackfillHours int
+	maxEventsPerCycle    int
+
 	cursorPath string
 	quietConf  QuietPeriodConfig
 	lastSpans  []artifacts.EventSpan
@@ -52,15 +68,25 @@ type IngestStats struct {
 }
 
 type CursorState struct {
-	LastOffset int64     `json:"last_offset"`
-	LastEvent  string    `json:"last_event_id"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	LastOffset           int64     `json:"last_offset"`
+	LastEvent            string    `json:"last_event_id"`
+	LastOpenCodePartTime int64     `json:"last_opencode_part_time,omitempty"`
+	LastOpenCodePartID   string    `json:"last_opencode_part_id,omitempty"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 func NewService(logger *slog.Logger, cfg config.Config) *Service {
 	return &Service{
 		logger:     logger,
 		cfg:        cfg,
+		sessionLog: cfg.SessionLogPath,
+		sourceKind: "jsonl",
+		opencodeDB: "",
+		mirrorPath: filepath.Join(cfg.StateDir, ".ingest_opencode_mirror.jsonl"),
+
+		initialBackfillHours: envInt("SYSTEM1_INGEST_INITIAL_BACKFILL_HOURS", defaultInitialBackfillHours),
+		maxEventsPerCycle:    envInt("SYSTEM1_INGEST_MAX_EVENTS_PER_CYCLE", defaultMaxEventsPerCycle),
+
 		cursorPath: filepath.Join(cfg.StateDir, ".ingest_cursor.json"),
 		quietConf: QuietPeriodConfig{
 			Threshold: 30 * time.Second,
@@ -72,7 +98,13 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	stats := &IngestStats{}
 	s.lastSpans = nil
 
-	logPath := s.cfg.SessionLogPath
+	if err := s.discoverSessionLogPath(ctx); err != nil {
+		s.logger.WarnContext(ctx, "session log discovery failed", "error", err)
+	}
+	if s.sourceKind == "opencode_sqlite" {
+		return s.ingestOpenCodeSQLite(ctx)
+	}
+	logPath := s.sessionLog
 	if _, err := os.Stat(logPath); errors.Is(err, os.ErrNotExist) {
 		s.logger.DebugContext(ctx, "session log does not exist yet", slog.String("path", logPath))
 		return stats, nil
@@ -142,6 +174,16 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 		pendingEvents = append(pendingEvents, *event)
 		stats.LastEventID = event.EventID
 
+		if stats.EventsProcessed >= s.maxEventsPerCycle {
+			s.logger.DebugContext(ctx, "jsonl ingest cycle event cap reached",
+				slog.Int("processed", stats.EventsProcessed),
+				slog.Int("cap", s.maxEventsPerCycle),
+			)
+			lineStartOffset, _ = file.Seek(0, io.SeekCurrent)
+			lineStartOffset -= int64(reader.Buffered())
+			break
+		}
+
 		lineStartOffset, _ = file.Seek(0, io.SeekCurrent)
 		lineStartOffset -= int64(reader.Buffered())
 	}
@@ -191,6 +233,387 @@ func (s *Service) Ingest(ctx context.Context) (*IngestStats, error) {
 	return stats, nil
 }
 
+func (s *Service) ingestOpenCodeSQLite(ctx context.Context) (*IngestStats, error) {
+	stats := &IngestStats{}
+	s.lastSpans = nil
+
+	if !fileExists(s.opencodeDB) {
+		s.logger.DebugContext(ctx, "opencode sqlite db does not exist yet", slog.String("path", s.opencodeDB))
+		return stats, nil
+	}
+
+	cursor, err := s.loadCursor(ctx)
+	if err != nil {
+		s.logger.WarnContext(ctx, "failed to load cursor, starting sqlite ingestion from beginning", slog.String("error", err.Error()))
+		cursor = &CursorState{}
+	}
+
+	db, err := sql.Open("sqlite3", s.opencodeDB)
+	if err != nil {
+		return nil, fmt.Errorf("open opencode sqlite db: %w", err)
+	}
+	defer db.Close()
+
+	minPartTime := int64(0)
+	if cursor.LastOpenCodePartTime == 0 && s.initialBackfillHours > 0 {
+		minPartTime = time.Now().Add(-time.Duration(s.initialBackfillHours) * time.Hour).UnixMilli()
+		s.logger.InfoContext(ctx, "applying initial opencode backfill window",
+			slog.Int("hours", s.initialBackfillHours),
+			slog.Int64("min_part_time", minPartTime),
+		)
+	}
+
+	query := `
+SELECT p.id, p.message_id, p.session_id, p.time_created, p.data, m.data
+FROM part p
+LEFT JOIN message m ON m.id = p.message_id
+WHERE (p.time_created > ? OR (p.time_created = ? AND p.id > ?))
+  AND p.time_created >= ?
+ORDER BY p.time_created ASC, p.id ASC
+LIMIT ?
+`
+	rows, err := db.QueryContext(ctx, query,
+		cursor.LastOpenCodePartTime,
+		cursor.LastOpenCodePartTime,
+		cursor.LastOpenCodePartID,
+		minPartTime,
+		s.maxEventsPerCycle,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query opencode parts: %w", err)
+	}
+	defer rows.Close()
+
+	if err := os.MkdirAll(filepath.Dir(s.mirrorPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create mirror directory: %w", err)
+	}
+
+	mirror, err := os.OpenFile(s.mirrorPath, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open mirror log: %w", err)
+	}
+	defer mirror.Close()
+
+	var pendingEvents []artifacts.RawEvent
+	for rows.Next() {
+		var partID, messageID, sessionID string
+		var timeCreated int64
+		var partData, messageData string
+		if err := rows.Scan(&partID, &messageID, &sessionID, &timeCreated, &partData, &messageData); err != nil {
+			return nil, fmt.Errorf("scan opencode part: %w", err)
+		}
+
+		event, ok := buildEventFromOpenCodePart(partID, messageID, sessionID, timeCreated, partData, messageData)
+		if !ok {
+			continue
+		}
+
+		offset, err := mirror.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, fmt.Errorf("seek mirror end: %w", err)
+		}
+
+		line := map[string]any{
+			"event_id":   event.EventID,
+			"source_id":  event.SourceID,
+			"session_id": event.SessionID,
+			"timestamp":  event.Timestamp.Format(time.RFC3339Nano),
+			"event_type": event.EventType,
+			"actor_type": event.ActorType,
+			"content":    event.Metadata["content"],
+		}
+		encoded, err := json.Marshal(line)
+		if err != nil {
+			return nil, fmt.Errorf("encode mirror event: %w", err)
+		}
+		if _, err := mirror.Write(append(encoded, '\n')); err != nil {
+			return nil, fmt.Errorf("write mirror event: %w", err)
+		}
+
+		event.RawRef = fmt.Sprintf("%s:%d", s.mirrorPath, offset)
+		pendingEvents = append(pendingEvents, event)
+		stats.EventsProcessed++
+		stats.LastEventID = event.EventID
+		cursor.LastOpenCodePartTime = timeCreated
+		cursor.LastOpenCodePartID = partID
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate opencode parts: %w", err)
+	}
+
+	if len(pendingEvents) == 0 {
+		return stats, nil
+	}
+
+	spans, err := s.buildSpans(ctx, pendingEvents)
+	if err != nil {
+		return nil, fmt.Errorf("build spans from opencode parts: %w", err)
+	}
+
+	s.lastSpans = spans
+	stats.SpansBuilt = len(spans)
+
+	newCursor := &CursorState{
+		LastOffset:           cursor.LastOffset,
+		LastEvent:            stats.LastEventID,
+		LastOpenCodePartTime: cursor.LastOpenCodePartTime,
+		LastOpenCodePartID:   cursor.LastOpenCodePartID,
+		UpdatedAt:            time.Now().UTC(),
+	}
+	if err := s.saveCursor(ctx, newCursor); err != nil {
+		s.logger.WarnContext(ctx, "failed to save cursor", slog.String("error", err.Error()))
+	} else {
+		stats.CursorSaved = true
+	}
+
+	s.logger.InfoContext(ctx, "opencode sqlite ingestion cycle complete",
+		slog.Int("events", stats.EventsProcessed),
+		slog.Int("spans", stats.SpansBuilt),
+		slog.String("db", s.opencodeDB),
+	)
+
+	return stats, nil
+}
+
+func buildEventFromOpenCodePart(partID, messageID, sessionID string, timeCreated int64, partData string, messageData string) (artifacts.RawEvent, bool) {
+	var part map[string]any
+	if err := json.Unmarshal([]byte(partData), &part); err != nil {
+		return artifacts.RawEvent{}, false
+	}
+	if t, _ := part["type"].(string); t != "text" {
+		return artifacts.RawEvent{}, false
+	}
+	text, _ := part["text"].(string)
+	if strings.TrimSpace(text) == "" {
+		return artifacts.RawEvent{}, false
+	}
+
+	actor := "agent"
+	if messageData != "" {
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(messageData), &msg); err == nil {
+			if role, ok := msg["role"].(string); ok && strings.TrimSpace(role) != "" {
+				actor = strings.TrimSpace(role)
+			}
+		}
+	}
+
+	ts := time.UnixMilli(timeCreated).UTC()
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+
+	return artifacts.RawEvent{
+		EventID:   "opencode_part_" + partID,
+		SourceID:  "opencode",
+		SessionID: sessionID,
+		Timestamp: ts,
+		EventType: "message",
+		ActorType: actor,
+		Metadata: map[string]any{
+			"part_id":    partID,
+			"message_id": messageID,
+			"content":    text,
+		},
+	}, true
+}
+
+func (s *Service) SetSessionLogPath(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	s.sessionLog = path
+}
+
+func (s *Service) discoverSessionLogPath(ctx context.Context) error {
+	if strings.TrimSpace(os.Getenv("SYSTEM1_SESSION_LOG_PATH")) != "" {
+		return nil
+	}
+
+	if fileExists(s.sessionLog) {
+		s.sourceKind = "jsonl"
+		return nil
+	}
+
+	opencodePath, err := discoverOpenCodeSessionLog()
+	if err != nil {
+		return err
+	}
+	if opencodePath != "" {
+		s.sourceKind = "jsonl"
+		s.sessionLog = opencodePath
+		s.logger.InfoContext(ctx, "auto-discovered opencode session log", slog.String("path", opencodePath))
+		return nil
+	}
+
+	opencodeDB := discoverOpenCodeDBPath()
+	if opencodeDB != "" {
+		s.sourceKind = "opencode_sqlite"
+		s.opencodeDB = opencodeDB
+		s.logger.InfoContext(ctx, "auto-discovered opencode sqlite session source", slog.String("path", opencodeDB))
+	}
+
+	return nil
+}
+
+func discoverOpenCodeSessionLog() (string, error) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		if !errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf("look up opencode executable: %w", err)
+		}
+		return "", nil
+	}
+
+	if commandPath := probeOpenCodePathFromCommands(); fileExists(commandPath) {
+		return commandPath, nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+
+	candidates := []string{
+		filepath.Join(home, ".opencode", "sessions.jsonl"),
+		filepath.Join(home, ".opencode", "session.jsonl"),
+		filepath.Join(home, ".local", "share", "opencode", "sessions.jsonl"),
+		filepath.Join(home, "Library", "Application Support", "opencode", "sessions.jsonl"),
+	}
+
+	for _, path := range candidates {
+		if fileExists(path) {
+			return path, nil
+		}
+	}
+
+	searchRoots := []string{
+		filepath.Join(home, ".opencode"),
+		filepath.Join(home, ".local", "share", "opencode"),
+		filepath.Join(home, "Library", "Application Support", "opencode"),
+	}
+
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+	found := make([]candidate, 0, 4)
+
+	for _, root := range searchRoots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := strings.ToLower(entry.Name())
+			if !strings.HasSuffix(name, ".jsonl") {
+				continue
+			}
+			if !strings.Contains(name, "session") && !strings.Contains(name, "log") {
+				continue
+			}
+			fullPath := filepath.Join(root, entry.Name())
+			stat, err := os.Stat(fullPath)
+			if err != nil {
+				continue
+			}
+			if stat.Size() == 0 {
+				continue
+			}
+			found = append(found, candidate{path: fullPath, modTime: stat.ModTime()})
+		}
+	}
+
+	if len(found) == 0 {
+		return "", nil
+	}
+
+	sort.Slice(found, func(i, j int) bool {
+		return found[i].modTime.After(found[j].modTime)
+	})
+
+	return found[0].path, nil
+}
+
+func discoverOpenCodeDBPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	candidates := []string{
+		filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
+		filepath.Join(home, ".opencode", "opencode.db"),
+	}
+	for _, path := range candidates {
+		if fileExists(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func probeOpenCodePathFromCommands() string {
+	commands := [][]string{
+		{"config", "get", "sessionLogPath"},
+		{"config", "get", "session_log_path"},
+		{"paths", "--json"},
+	}
+
+	for _, args := range commands {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		cmd := exec.CommandContext(ctx, "opencode", args...)
+		out, err := cmd.Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		candidate := parseOpenCodePathOutput(string(out))
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func parseOpenCodePathOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+
+	if fileExists(output) {
+		return output
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal([]byte(output), &m); err != nil {
+		return ""
+	}
+
+	for _, key := range []string{"session_log_path", "sessionLogPath", "log_path", "logPath", "sessions"} {
+		if v, ok := m[key].(string); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !stat.IsDir()
+}
+
 func (s *Service) parseEvent(ctx context.Context, line string, logPath string, offset int64) (*artifacts.RawEvent, error) {
 	var raw json.RawMessage
 	event := artifacts.RawEvent{
@@ -208,10 +631,82 @@ func (s *Service) parseEvent(ctx context.Context, line string, logPath string, o
 	}
 
 	if event.EventID == "" {
+		event = normalizeRawEvent(raw, event)
+	}
+
+	if event.EventID == "" {
 		return nil, fmt.Errorf("%w: missing event_id", ErrParseError)
 	}
 
 	return &event, nil
+}
+
+func normalizeRawEvent(raw json.RawMessage, base artifacts.RawEvent) artifacts.RawEvent {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return base
+	}
+
+	if base.EventID == "" {
+		base.EventID = firstString(m, "event_id", "id", "uuid")
+	}
+	if base.SourceID == "" {
+		base.SourceID = firstString(m, "source_id", "source", "agent", "app")
+	}
+	if base.SessionID == "" {
+		base.SessionID = firstString(m, "session_id", "session", "conversation_id", "thread_id")
+	}
+	if base.EventType == "" {
+		base.EventType = firstString(m, "event_type", "type", "kind")
+	}
+	if base.ActorType == "" {
+		base.ActorType = firstString(m, "actor_type", "role", "actor", "sender")
+	}
+	if base.Timestamp.IsZero() {
+		if ts := firstString(m, "timestamp", "time", "created_at"); ts != "" {
+			if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+				base.Timestamp = parsed
+			}
+		}
+	}
+	if base.Timestamp.IsZero() {
+		base.Timestamp = time.Now().UTC()
+	}
+
+	if base.SourceID == "" {
+		base.SourceID = "unknown_source"
+	}
+	if base.SessionID == "" {
+		base.SessionID = "unknown_session"
+	}
+	if base.EventType == "" {
+		base.EventType = "message"
+	}
+	if base.ActorType == "" {
+		base.ActorType = "agent"
+	}
+
+	if base.Metadata == nil {
+		base.Metadata = make(map[string]any)
+	}
+
+	return base
+}
+
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case string:
+				if strings.TrimSpace(t) != "" {
+					return strings.TrimSpace(t)
+				}
+			case float64:
+				return strings.TrimSpace(fmt.Sprintf("%.0f", t))
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Service) buildSpans(ctx context.Context, events []artifacts.RawEvent) ([]artifacts.EventSpan, error) {
@@ -371,4 +866,16 @@ func currentReadOffset(file *os.File, reader *bufio.Reader) (int64, error) {
 
 func generateSpanID() string {
 	return fmt.Sprintf("span_%d", time.Now().UnixNano())
+}
+
+func envInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }

@@ -25,6 +25,7 @@ type Service struct {
 	cfg          config.Config
 	enabledTypes map[string]bool
 	provider     model.Provider
+	traceLogs    bool
 }
 
 func NewService(logger *slog.Logger, cfg config.Config) *Service {
@@ -32,7 +33,7 @@ func NewService(logger *slog.Logger, cfg config.Config) *Service {
 	for _, t := range cfg.EnabledTypes {
 		enabled[strings.ToUpper(t)] = true
 	}
-	return &Service{logger: logger, cfg: cfg, enabledTypes: enabled}
+	return &Service{logger: logger, cfg: cfg, enabledTypes: enabled, traceLogs: envBool("SYSTEM1_TRACE_EXTRACTION")}
 }
 
 func (s *Service) WithModelProvider(provider model.Provider) *Service {
@@ -41,19 +42,33 @@ func (s *Service) WithModelProvider(provider model.Provider) *Service {
 }
 
 func (s *Service) Extract(ctx context.Context, span artifacts.EventSpan) ([]artifacts.CandidateArtifact, error) {
-	s.logger.DebugContext(ctx, "extract requested", slog.String("span_id", span.SpanID))
+	if s.traceLogs {
+		s.logger.DebugContext(ctx, "extract requested", slog.String("span_id", span.SpanID))
+	}
 
 	if len(s.cfg.EnabledTypes) == 0 {
 		return nil, ErrNoEnabledTypes
 	}
 
 	candidates := s.detectCandidates(ctx, span)
-	s.logger.InfoContext(ctx, "extraction complete",
-		slog.String("span_id", span.SpanID),
-		slog.Int("candidates", len(candidates)),
-	)
+	if s.traceLogs {
+		s.logger.DebugContext(ctx, "extraction complete",
+			slog.String("span_id", span.SpanID),
+			slog.Int("candidates", len(candidates)),
+		)
+	}
 
 	return candidates, nil
+}
+
+func envBool(key string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) detectCandidates(ctx context.Context, span artifacts.EventSpan) []artifacts.CandidateArtifact {
@@ -454,16 +469,74 @@ func readContentFromRef(ref string) (string, error) {
 		return "", fmt.Errorf("empty line at offset")
 	}
 
-	var event struct {
-		Content string `json:"content"`
+	content, err := extractContentFromGenericEvent(line)
+	if err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal([]byte(line), &event); err != nil {
-		return "", fmt.Errorf("parse event JSON: %w", err)
-	}
-
-	if event.Content == "" {
+	if strings.TrimSpace(content) == "" {
 		return "", fmt.Errorf("no content field in event")
 	}
 
-	return event.Content, nil
+	return content, nil
+}
+
+func extractContentFromGenericEvent(line string) (string, error) {
+	var event map[string]any
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		return "", fmt.Errorf("malformed event JSON: %w", err)
+	}
+
+	if content, ok := event["content"]; ok {
+		if text := normalizeContentValue(content); strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+	}
+	for _, key := range []string{"text", "message", "body"} {
+		if v, ok := event[key]; ok {
+			if text := normalizeContentValue(v); strings.TrimSpace(text) != "" {
+				return text, nil
+			}
+		}
+	}
+
+	if payload, ok := event["payload"].(map[string]any); ok {
+		if text := normalizeContentValue(payload["content"]); strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+	}
+
+	if data, ok := event["data"].(map[string]any); ok {
+		if text := normalizeContentValue(data["content"]); strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+	}
+
+	return "", nil
+}
+
+func normalizeContentValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			switch p := item.(type) {
+			case string:
+				if strings.TrimSpace(p) != "" {
+					parts = append(parts, strings.TrimSpace(p))
+				}
+			case map[string]any:
+				if text, ok := p["text"].(string); ok && strings.TrimSpace(text) != "" {
+					parts = append(parts, strings.TrimSpace(text))
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		if text, ok := t["text"].(string); ok {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
 }

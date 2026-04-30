@@ -100,9 +100,6 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.OpenRouterAPIKey) == "" {
 			return fmt.Errorf("openrouter provider requires OpenRouterAPIKey to be set (SYSTEM1_OPENROUTER_API_KEY)")
 		}
-		if strings.TrimSpace(c.OpenRouterModel) == "" {
-			return fmt.Errorf("openrouter provider requires OpenRouterModel to be set (SYSTEM1_OPENROUTER_MODEL)")
-		}
 	default:
 		return fmt.Errorf("unknown model provider %q: must be one of \"none\", \"oracle\", \"openrouter\"", c.ModelProvider)
 	}
