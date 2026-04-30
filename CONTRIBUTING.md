@@ -3,7 +3,6 @@
 Thanks for contributing to System-1.
 
 This project is still in early scaffold/MVP phase.
-It is intentionally vibe-coded: favor fast, behavior-driven iteration that improves subconscious reliability for the conscious agent.
 
 ## For now
 
