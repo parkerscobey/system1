@@ -2,7 +2,7 @@
 
 System-1 is a subconscious runtime for AI agents.
 
-🌈*This is a vibe-coded project.*🤖
+🌈 *This is a vibe-coded project.* 🤖
 
 The primary product goal is to reduce the tool-calling surface and memory-management burden of the conscious agent.
 The conscious agent should spend less time orchestrating memory tools and more time doing useful work.
