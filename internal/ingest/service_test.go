@@ -3,11 +3,13 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/XferOps/system1/internal/artifacts"
 	"github.com/XferOps/system1/internal/config"
@@ -377,11 +379,12 @@ func TestIngestAutoDiscoversOpenCodeSQLite(t *testing.T) {
 	}
 	defer db.Close()
 
+	nowMs := time.Now().UTC().UnixMilli()
 	stmts := []string{
 		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`,
 		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`,
-		`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('msg1','sess1',1777010000000,1777010000000,'{"role":"user"}');`,
-		`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES ('part1','msg1','sess1',1777010001000,1777010001000,'{"type":"text","text":"I prefer deterministic tests."}');`,
+		fmt.Sprintf(`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('msg1','sess1',%d,%d,'{"role":"user"}');`, nowMs, nowMs),
+		fmt.Sprintf(`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES ('part1','msg1','sess1',%d,%d,'{"type":"text","text":"I prefer deterministic tests."}');`, nowMs+1000, nowMs+1000),
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
