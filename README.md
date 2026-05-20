@@ -2,12 +2,9 @@
 
 System-1 is a subconscious runtime for AI agents.
 
-🌈*This is a vibe-coded project.*🤖
+Its job is to reduce the memory-management and tool-orchestration burden of the conscious agent so the foreground agent can spend less time managing context and more time doing useful work.
 
-The primary product goal is to reduce the tool-calling surface and memory-management burden of the conscious agent.
-The conscious agent should spend less time orchestrating memory tools and more time doing useful work.
-
-This repo is the Go implementation of the first thin vertical slice:
+This repository is the Go implementation of the first thin vertical slice. Today it focuses on a small but real end-to-end loop:
 
 - single daemon
 - single agent
@@ -19,10 +16,9 @@ This repo is the Go implementation of the first thin vertical slice:
 
 ## Current status
 
-This repository is still MVP-thin, but no longer just scaffold.
+This repository is still MVP-thin, but it is no longer just scaffold.
 
-In plain terms: this repo is where we aggressively prototype the subconscious layer so the main agent can stay simple.
-If a feature does not clearly reduce conscious-agent context/tool overhead, it is likely not the right priority.
+In plain terms: this repo prototypes the subconscious layer so the main agent can stay simple. If a feature does not clearly reduce conscious-agent context or tool overhead, it is probably not the right priority.
 
 The active MVP loop in daemon runtime is:
 
@@ -57,7 +53,7 @@ testdata                 # fixtures
 
 ## CLI
 
-Current scaffold commands:
+Current commands:
 
 - `system1 serve`
 - `system1 doctor`
