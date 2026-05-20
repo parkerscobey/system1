@@ -1,12 +1,10 @@
 # System-1
 
+**A subconscious runtime for AI agents that reduces memory-management and tool-orchestration overhead for the conscious agent.**
+
 [![CI](https://github.com/parkerscobey/system1/actions/workflows/ci.yml/badge.svg)](https://github.com/parkerscobey/system1/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.24-00ADD8?logo=go&logoColor=white)](go.mod)
-
-System-1 is a subconscious runtime for AI agents.
-
-Its job is to reduce the memory-management and tool-orchestration burden of the conscious agent so the foreground agent can spend less time managing context and more time doing useful work.
 
 This repository is the Go implementation of the first thin vertical slice. Today it focuses on a small but real end-to-end loop:
 
